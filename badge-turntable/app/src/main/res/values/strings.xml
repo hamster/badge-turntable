@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Badge Turntable</string>
+
+    <!-- Sessions -->
+    <string name="sessions_empty">No badges yet. Tap New session to photograph one.</string>
+    <string name="new_session">New session</string>
+    <string name="edit_session">Edit session</string>
+    <string name="action_sync">Sync now</string>
+    <string name="action_settings">Settings</string>
+    <string name="sync_queued">Sync queued</string>
+    <string name="sync_local">Local only</string>
+    <string name="sync_pending">Sync pending</string>
+    <string name="sync_synced">Synced</string>
+    <string name="sync_failed">Sync failed</string>
+
+    <!-- Session edit -->
+    <string name="field_title">Title</string>
+    <string name="field_con">Con</string>
+    <string name="field_year">Year</string>
+    <string name="field_group">Group</string>
+    <string name="field_event">Event (optional)</string>
+    <string name="field_slug">Folder name (slug)</string>
+    <string name="field_badge_id">Badge ID (3 hex digits)</string>
+    <string name="opt_video">Capture spin video</string>
+    <string name="opt_auto">Automatic turntable</string>
+    <string name="opt_sync">Upload to Samba</string>
+    <string name="save">Save</string>
+    <string name="save_and_capture">Save and capture</string>
+    <string name="title_required">A title is needed</string>
+    <string name="badge_id_blank">Optional. The web editor can suggest one later.</string>
+    <string name="badge_id_invalid">Use 3 hex digits, like 00F</string>
+    <string name="badge_id_taken">%1$s is already used by %2$s</string>
+    <string name="badge_id_ok">Not used by any badge this app knows about</string>
+
+    <!-- Capture -->
+    <string name="capture">Capture</string>
+    <string name="extra_shot">Extra shot</string>
+    <string name="calibrate">Calibrate</string>
+    <string name="auto_turntable">Auto turntable</string>
+    <string name="wb_label">WB: %1$s</string>
+    <string name="ev_minus">EV −</string>
+    <string name="ev_plus">EV +</string>
+    <string name="ring_reading">Ring %1$.1f° (%2$d markers)</string>
+    <string name="ring_not_visible">Ring not visible</string>
+    <string name="no_remote">No turntable remote set up: manual mode only.</string>
+    <string name="camera_permission_needed">The camera permission is needed to capture badges.</string>
+    <string name="calibrate_first_title">Calibrate first?</string>
+    <string name="calibrate_first_message">The turntable hasn\'t been calibrated, the profile changed, or the encoder ring can\'t be seen. Calibrate now, or capture in manual mode.</string>
+    <string name="use_manual">Use manual</string>
+    <string name="low_storage">Less than 500 MB free. Make some space before capturing.</string>
+    <string name="samba_not_set_up">Samba isn\'t set up</string>
+    <string name="samba_unreachable">Can\'t reach the Samba share</string>
+    <string name="samba_alert_message">Save this capture on the phone only (it uploads later when the share is reachable), or cancel and fix it in Settings.</string>
+    <string name="save_locally">Save locally only</string>
+    <string name="extra_other">Other…</string>
+    <string name="extra_set">Extra turntable set…</string>
+    <string name="extra_label_hint">Label, e.g. SAO close-up</string>
+    <string name="extra_set_hint">Label, e.g. With SAOs installed</string>
+    <string name="move_failed_title">Turntable problem</string>
+    <string name="retry">Retry</string>
+    <string name="switch_to_manual">Switch to manual</string>
+    <string name="stop">Stop</string>
+    <string name="capture_done">Done. Saved to the badge folder.</string>
+    <string name="capture_partial">Stopped. The views taken so far are saved.</string>
+    <string name="capture_error">Capture failed: %1$s</string>
+    <string name="calibration_failed">Calibration failed: %1$s</string>
+
+    <!-- Settings -->
+    <string name="settings">Settings</string>
+    <string name="cat_samba">Samba share</string>
+    <string name="cat_turntable">Turntable</string>
+    <string name="cat_capture">Capture</string>
+    <string name="cat_badge_ids">Badge IDs</string>
+    <string name="cat_device">Device</string>
+    <string name="smb_host">Host</string>
+    <string name="smb_port">Port</string>
+    <string name="smb_share">Share name</string>
+    <string name="smb_path">Folder inside the share</string>
+    <string name="smb_domain">Domain (optional)</string>
+    <string name="smb_user">User name (blank for guest)</string>
+    <string name="smb_password">Password</string>
+    <string name="smb_test">Test connection</string>
+    <string name="testing">Testing…</string>
+    <string name="set">Set</string>
+    <string name="not_set">Not set</string>
+    <string name="turntable_model">Turntable model</string>
+    <string name="ring_markers">Encoder ring marker count</string>
+    <string name="calibration">Calibration</string>
+    <string name="not_calibrated">Not calibrated</string>
+    <string name="calibrated_summary">%1$.1f°/s, overshoot %2$.1f°, %3$s. Tap to clear.</string>
+    <string name="manual_delay">Manual capture delay</string>
+    <string name="video_overlap">Spin video overlap (degrees)</string>
+    <string name="badge_ids_url">Site badge-ids.json URL</string>
+    <string name="probe">Camera and IR capabilities</string>
+</resources>

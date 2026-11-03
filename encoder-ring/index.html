@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Encoder Ring Generator</title>
+<style>
+  :root {
+    --bg: #f6f7f8; --panel: #fff; --text: #1b1f23; --muted: #5c6670; --border: #d6dbe0;
+    --accent: #2f6f4f; --accent-text: #fff; --error: #b42318; --sheet-shadow: rgba(0,0,0,.12);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #15181b; --panel: #1e2226; --text: #e6e8ea; --muted: #9aa4ad; --border: #343a40;
+      --accent: #4fa37a; --accent-text: #0d1f16; --error: #f97066; --sheet-shadow: rgba(0,0,0,.5);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #15181b; --panel: #1e2226; --text: #e6e8ea; --muted: #9aa4ad; --border: #343a40;
+    --accent: #4fa37a; --accent-text: #0d1f16; --error: #f97066; --sheet-shadow: rgba(0,0,0,.5);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  p.lede { margin: 0 0 20px; color: var(--muted); }
+  a { color: var(--accent); }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  form { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 14px; }
+  label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+  input, select { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; min-width: 0; }
+  .summary { margin: 14px 0 0; font-size: 14px; }
+  .summary.error { color: var(--error); }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  button { font: inherit; border: 1px solid var(--border); background: var(--panel); color: var(--text); border-radius: 6px; padding: 7px 14px; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  button:disabled { opacity: .5; cursor: default; }
+  #preview { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 20px; }
+  .sheet { background: #fff; box-shadow: 0 1px 6px var(--sheet-shadow); max-width: 100%; }
+  .sheet svg { display: block; width: 100%; height: auto; }
+  .sheet.paper { width: 100%; }
+  .sheet.label { width: 260px; }
+  #print-area { display: none; }
+  @media print {
+    body { background: #fff; }
+    main { display: none; }
+    #print-area { display: block; }
+    #print-area svg { display: block; break-after: page; }
+  }
+</style>
+<style id="page-size"></style>
+</head>
+<body>
+<main>
+  <h1>Encoder ring generator</h1>
+  <p class="lede">Makes the ArUco marker band for the Badge Turntable app. Measure your turntable rim, then print on paper or a 4×6 in label.
+    How it works: <a href="README.md">README</a>.</p>
+
+  <div class="panel">
+    <form id="form">
+      <label>Measure by
+        <select name="measure">
+          <option value="circumference">Circumference</option>
+          <option value="diameter">Diameter</option>
+        </select>
+      </label>
+      <label>Rim size (mm)
+        <input name="size" type="number" min="20" step="0.1" value="628.3">
+      </label>
+      <label>Band height (mm)
+        <input name="height" type="number" min="6" step="0.5" value="16">
+      </label>
+      <label>Markers
+        <input name="count" type="number" min="4" step="1" placeholder="Auto">
+      </label>
+      <label>Dictionary
+        <select name="dict">
+          <option value="50">DICT_4X4_50</option>
+          <option value="100">DICT_4X4_100</option>
+          <option value="250">DICT_4X4_250</option>
+        </select>
+      </label>
+      <label>Print on
+        <select name="output">
+          <option value="letter">US Letter paper</option>
+          <option value="a4">A4 paper</option>
+          <option value="zpl203">4×6 label, 203 dpi (ZPL)</option>
+          <option value="zpl300">4×6 label, 300 dpi (ZPL)</option>
+        </select>
+      </label>
+    </form>
+    <p id="summary" class="summary"></p>
+    <div class="actions">
+      <button id="print" class="primary" type="button">Print</button>
+      <button id="svg" type="button">Download SVG</button>
+      <button id="zpl" type="button">Download ZPL</button>
+      <button id="copy" type="button">Copy ZPL</button>
+    </div>
+  </div>
+
+  <div id="preview"></div>
+</main>
+<div id="print-area"></div>
+
+<script type="module">
+  import { planRing, paperSvgs, labelSvgs, labelZpl, summary, PAPER } from './ring.js';
+
+  const form = document.getElementById('form');
+  const $ = (id) => document.getElementById(id);
+  const STORE = 'encoder-ring-form';
+  let current = null;
+
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORE) || 'null');
+    if (saved) for (const [k, v] of Object.entries(saved)) if (form.elements[k]) form.elements[k].value = v;
+  } catch (_) { /* storage unavailable */ }
+
+  function read() {
+    const f = form.elements;
+    const size = parseFloat(f.size.value);
+    return {
+      opts: {
+        circumference: f.measure.value === 'circumference' ? size : 0,
+        diameter: f.measure.value === 'diameter' ? size : 0,
+        height: parseFloat(f.height.value),
+        count: parseInt(f.count.value, 10) || 0,
+        dictSize: parseInt(f.dict.value, 10),
+      },
+      output: f.output.value,
+    };
+  }
+
+  function render() {
+    const { opts, output } = read();
+    try {
+      localStorage.setItem(STORE, JSON.stringify(Object.fromEntries(new FormData(form))));
+    } catch (_) { /* storage unavailable */ }
+    const preview = $('preview');
+    preview.innerHTML = '';
+    try {
+      const plan = planRing(opts);
+      const isLabel = output.startsWith('zpl');
+      const dpi = output === 'zpl300' ? 300 : 203;
+      const svgs = isLabel ? labelSvgs(plan) : paperSvgs(plan, output);
+      const zpl = isLabel ? labelZpl(plan, dpi) : '';
+      current = { plan, svgs, zpl, isLabel, output, dpi };
+      const unit = isLabel ? 'label' : 'page';
+      $('summary').className = 'summary';
+      $('summary').textContent = `${summary(plan)}  |  ${svgs.length} ${unit}${svgs.length > 1 ? 's' : ''}`;
+      for (const svg of svgs) {
+        const div = document.createElement('div');
+        div.className = 'sheet ' + (isLabel ? 'label' : 'paper');
+        div.innerHTML = svg;
+        preview.appendChild(div);
+      }
+    } catch (err) {
+      current = null;
+      $('summary').className = 'summary error';
+      $('summary').textContent = err.message;
+    }
+    const ok = !!current;
+    $('print').disabled = !ok || current.isLabel;
+    $('svg').disabled = !ok;
+    $('zpl').disabled = !ok || !current.isLabel;
+    $('copy').disabled = !ok || !current.isLabel;
+  }
+
+  function download(name, text, type) {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], { type }));
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+
+  $('print').addEventListener('click', () => {
+    const paper = PAPER[current.output];
+    $('page-size').textContent = `@page { size: ${paper.w}mm ${paper.h}mm; margin: 0; }`;
+    $('print-area').innerHTML = current.svgs.join('');
+    window.print();
+  });
+  $('svg').addEventListener('click', () => {
+    const base = current.isLabel ? 'ring-4x6-preview' : `ring-${current.output}`;
+    current.svgs.forEach((svg, i) => download(`${base}-${i + 1}.svg`, svg, 'image/svg+xml'));
+  });
+  $('zpl').addEventListener('click', () => download(`ring-4x6-${current.dpi}dpi.zpl`, current.zpl, 'text/plain'));
+  $('copy').addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(current.zpl);
+      $('copy').textContent = 'Copied';
+      setTimeout(() => { $('copy').textContent = 'Copy ZPL'; }, 1500);
+    } catch (_) {
+      $('copy').textContent = 'Copy failed';
+    }
+  });
+
+  form.addEventListener('input', render);
+  render();
+</script>
+</body>
+</html>

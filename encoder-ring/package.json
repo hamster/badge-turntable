@@ -1,0 +1,9 @@
+{
+  "name": "badge-turntable-encoder-ring",
+  "private": true,
+  "type": "module",
+  "description": "Encoder ring generator for the Badge Turntable app",
+  "scripts": {
+    "docs": "node make-ring.mjs --docs"
+  }
+}

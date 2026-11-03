@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string-array name="turntable_names">
+        <item>JAYEGT 5.74 in display stand</item>
+        <item>No remote (manual only)</item>
+    </string-array>
+    <string-array name="turntable_ids">
+        <item>jayegt-5.74</item>
+        <item>none</item>
+    </string-array>
+    <string-array name="delay_names">
+        <item>1 second</item>
+        <item>2 seconds</item>
+        <item>3 seconds</item>
+        <item>5 seconds</item>
+    </string-array>
+    <string-array name="delay_values">
+        <item>1000</item>
+        <item>2000</item>
+        <item>3000</item>
+        <item>5000</item>
+    </string-array>
+</resources>

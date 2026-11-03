@@ -1,0 +1,78 @@
+plugins {
+    alias(libs.plugins.android.application)
+}
+
+android {
+    namespace 'org.snurkle.badgeturntable'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId 'org.snurkle.badgeturntable'
+        minSdk 31
+        targetSdk 36
+        versionCode 1
+        versionName '0.1'
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    packaging {
+        resources {
+            // smbj pulls in bouncycastle and friends, which ship clashing metadata
+            excludes += ['META-INF/DEPENDENCIES', 'META-INF/LICENSE*', 'META-INF/NOTICE*',
+                         'META-INF/versions/9/OSGI-INF/MANIFEST.MF']
+        }
+    }
+
+    testOptions {
+        unitTests.returnDefaultValues = true
+    }
+}
+
+// Bundle the repo's badge template so generated index.md files can't drift from it.
+def copyBadgeTemplate = tasks.register('copyBadgeTemplate', Copy) {
+    from rootProject.file('../../_template/index.md')
+    into layout.projectDirectory.dir('src/main/assets/template')
+}
+tasks.named('preBuild') { dependsOn copyBadgeTemplate }
+
+dependencies {
+    implementation libs.appcompat
+    implementation libs.material
+    implementation libs.activity
+    implementation libs.constraintlayout
+    implementation libs.recyclerview
+    implementation libs.preference
+    implementation libs.lifecycle.runtime
+
+    implementation libs.camera.core
+    implementation libs.camera.camera2
+    implementation libs.camera.lifecycle
+    implementation libs.camera.video
+    implementation libs.camera.view
+
+    implementation libs.media3.transformer
+    implementation libs.media3.effect
+    implementation libs.media3.common
+
+    implementation libs.work.runtime
+    implementation libs.exifinterface
+    implementation libs.opencv
+    implementation libs.smbj
+
+    // IR learning over a USB IR receiver (phase 7); also uncomment jitpack in settings.gradle
+    // implementation 'com.github.mik3y:usb-serial-for-android:3.8.0'
+
+    testImplementation libs.junit
+    testImplementation libs.json  // real org.json for JVM tests (Android's is a stub)
+}

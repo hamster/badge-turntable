@@ -1,0 +1,45 @@
+# Versions current when this was written (late 2025 releases). Android Studio's
+# "Upgrade Assistant" and lint will offer newer ones; bump freely.
+[versions]
+agp = "8.10.1"
+appcompat = "1.7.0"
+material = "1.12.0"
+activity = "1.10.1"
+constraintlayout = "2.2.1"
+recyclerview = "1.4.0"
+preference = "1.2.1"
+lifecycle = "2.8.7"
+camerax = "1.4.2"
+media3 = "1.6.1"
+work = "2.10.1"
+exifinterface = "1.4.1"
+opencv = "4.10.0"
+smbj = "0.13.0"
+junit = "4.13.2"
+json = "20240303"
+
+[libraries]
+appcompat = { module = "androidx.appcompat:appcompat", version.ref = "appcompat" }
+material = { module = "com.google.android.material:material", version.ref = "material" }
+activity = { module = "androidx.activity:activity", version.ref = "activity" }
+constraintlayout = { module = "androidx.constraintlayout:constraintlayout", version.ref = "constraintlayout" }
+recyclerview = { module = "androidx.recyclerview:recyclerview", version.ref = "recyclerview" }
+preference = { module = "androidx.preference:preference", version.ref = "preference" }
+lifecycle-runtime = { module = "androidx.lifecycle:lifecycle-runtime", version.ref = "lifecycle" }
+camera-core = { module = "androidx.camera:camera-core", version.ref = "camerax" }
+camera-camera2 = { module = "androidx.camera:camera-camera2", version.ref = "camerax" }
+camera-lifecycle = { module = "androidx.camera:camera-lifecycle", version.ref = "camerax" }
+camera-video = { module = "androidx.camera:camera-video", version.ref = "camerax" }
+camera-view = { module = "androidx.camera:camera-view", version.ref = "camerax" }
+media3-transformer = { module = "androidx.media3:media3-transformer", version.ref = "media3" }
+media3-effect = { module = "androidx.media3:media3-effect", version.ref = "media3" }
+media3-common = { module = "androidx.media3:media3-common", version.ref = "media3" }
+work-runtime = { module = "androidx.work:work-runtime", version.ref = "work" }
+exifinterface = { module = "androidx.exifinterface:exifinterface", version.ref = "exifinterface" }
+opencv = { module = "org.opencv:opencv", version.ref = "opencv" }
+smbj = { module = "com.hierynomus:smbj", version.ref = "smbj" }
+junit = { module = "junit:junit", version.ref = "junit" }
+json = { module = "org.json:json", version.ref = "json" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }

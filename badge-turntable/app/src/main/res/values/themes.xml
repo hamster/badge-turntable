@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="brand">#2F6F4F</color>
+    <color name="brand_dark">#1D4A33</color>
+    <color name="badge_amber">#F2B134</color>
+    <color name="overlay">#99000000</color>
+
+    <style name="Theme.BadgeTurntable" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/brand</item>
+        <item name="colorSecondary">@color/badge_amber</item>
+    </style>
+
+    <style name="Theme.BadgeTurntable.Capture">
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:navigationBarColor">@android:color/black</item>
+    </style>
+</resources>
