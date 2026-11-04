@@ -8,7 +8,7 @@ import org.json.JSONObject;
 /**
  * What calibration learned about the turntable. Stored in SharedPreferences as JSON.
  *
- * "Forward" is the way the table turns for START_STOP and the step buttons.
+ * "Forward" is the way the table turns for TurntableController.start() and the step buttons.
  * {@code directionSign} is +1 if the ring angle increases going forward, -1 if it
  * decreases (the table turning the other way, or the strips applied upside down;
  * either is fine as long as it's known).
@@ -18,8 +18,8 @@ public final class Calibration {
 
     public double degPerSec;          // continuous rotation speed
     public int directionSign = 1;
-    public double stopOvershootDeg;   // how far the table coasts after START_STOP stops it
-    public long startLatencyMs;       // time from sending START_STOP to visible movement
+    public double stopOvershootDeg;   // how far the table coasts after stop()
+    public long startLatencyMs;       // time from start() to visible movement
     public double zeroAngleDeg;       // ring angle that counts as "home"
     public double step90Deg = Double.NaN;  // measured size of a STEP_90 press, if the remote has one
     public String profileFingerprint = "";

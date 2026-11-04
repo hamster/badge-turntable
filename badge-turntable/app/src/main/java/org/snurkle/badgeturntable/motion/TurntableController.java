@@ -16,6 +16,7 @@ import java.util.function.Supplier;
 public final class TurntableController {
     private static final long POLL_MS = 30;
     private static final double MOVED_DEG = 2.0;
+    private static final double HOME_TOL_DEG = 2.0;  // matches the spec's positioning tolerance
     private static final long PRESS_GAP_MS = 150;
 
     private final IrTransmitter ir;
@@ -43,6 +44,20 @@ public final class TurntableController {
         if (code == null) throw new MoveFailedException(MoveFailedException.Reason.NO_REMOTE, "no code for " + role);
         ir.send(code);
         Thread.sleep(PRESS_GAP_MS);
+    }
+
+    /**
+     * Starts continuous rotation from rest. Prefers TURN_RIGHT: on the JAYEGT it always
+     * gives continuous rotation in a known direction, while START_STOP is a toggle whose
+     * result depends on the mode (from intermittent it switches to continuous).
+     */
+    public void start() throws MoveFailedException, InterruptedException {
+        press(profile.has(Role.TURN_RIGHT) ? Role.TURN_RIGHT : Role.START_STOP);
+    }
+
+    /** Stops a moving table. START_STOP toggles, so only call this while it's moving. */
+    public void stop() throws MoveFailedException, InterruptedException {
+        press(Role.START_STOP);
     }
 
     /**
@@ -83,7 +98,7 @@ public final class TurntableController {
             if (step != null) {
                 press(step);
             } else {
-                press(Role.START_STOP);
+                start();
             }
             if (awaitMovement(start)) {
                 if (step == null) stopAfter(start, degrees - cal.stopOvershootDeg);
@@ -96,18 +111,34 @@ public final class TurntableController {
         throw new MoveFailedException(MoveFailedException.Reason.NO_MOVEMENT, "no movement after two presses");
     }
 
-    /** Back to the calibrated zero, by RETURN_TO_ORIGIN if the remote has it. */
+    /**
+     * Back to the calibrated zero, checked against the ring. Tries RETURN_TO_ORIGIN first
+     * if the remote has it. That only works once the table's own origin has been set
+     * (SET_ORIGIN), and the table loses it if its battery runs flat. So if it
+     * doesn't land on zero, this homes by the ring instead and sets the origin again.
+     */
     public double home() throws MoveFailedException, InterruptedException {
-        if (profile.has(Role.RETURN_TO_ORIGIN)) {
-            double start = waitForStable(3000, 0.5, 300);
-            press(Role.RETURN_TO_ORIGIN);
-            if (!Double.isNaN(start) && Math.abs(RingReading.delta(start, cal.zeroAngleDeg)) > MOVED_DEG) awaitMovement(start);
-            return waitForStable(timeForMs(360) + 5000, 0.5, 300);
-        }
         double now = waitForStable(3000, 0.5, 300);
         if (Double.isNaN(now)) throw new MoveFailedException(MoveFailedException.Reason.RING_LOST, "ring not readable");
+        if (atZero(now)) return now;
+
+        if (profile.has(Role.RETURN_TO_ORIGIN)) {
+            press(Role.RETURN_TO_ORIGIN);
+            awaitMovement(now);
+            double end = waitForStable(timeForMs(360) + 5000, 0.5, 300);
+            if (!Double.isNaN(end) && atZero(end)) return end;
+            now = waitForStable(3000, 0.5, 300);
+            if (Double.isNaN(now)) throw new MoveFailedException(MoveFailedException.Reason.RING_LOST, "ring lost while homing");
+        }
+
         double togo = cal.forward(now, cal.zeroAngleDeg);
-        return togo < 1 ? now : moveBy(togo);
+        double end = (togo < 1 || togo > 359) ? now : moveBy(togo);
+        if (profile.has(Role.SET_ORIGIN) && atZero(end)) press(Role.SET_ORIGIN);
+        return end;
+    }
+
+    private boolean atZero(double angle) {
+        return Math.abs(RingReading.delta(angle, cal.zeroAngleDeg)) <= HOME_TOL_DEG;
     }
 
     /** True once the angle has moved by MOVED_DEG within the expected start time. */
@@ -121,7 +152,7 @@ public final class TurntableController {
         return false;
     }
 
-    /** Continuous rotation: send START_STOP once forward travel reaches {@code stopAt} degrees. */
+    /** Continuous rotation: stop once forward travel reaches {@code stopAt} degrees. */
     private void stopAfter(double start, double stopAt) throws MoveFailedException, InterruptedException {
         long deadline = System.currentTimeMillis() + timeForMs(stopAt) + 5000;
         double travelled = 0, last = start;
@@ -132,13 +163,13 @@ public final class TurntableController {
                 if (step > -5) travelled += Math.max(step, 0);  // ignore jitter backwards
                 last = r.angleDeg;
                 if (travelled >= stopAt) {
-                    press(Role.START_STOP);
+                    stop();
                     return;
                 }
             }
             Thread.sleep(POLL_MS / 2);
         }
-        press(Role.START_STOP);
+        stop();
         throw new MoveFailedException(MoveFailedException.Reason.TIMEOUT, "didn't reach " + stopAt + "° in time");
     }
 

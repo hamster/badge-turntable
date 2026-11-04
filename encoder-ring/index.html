@@ -28,6 +28,7 @@
   .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
   form { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 14px; }
   label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+  label.check { flex-direction: row; align-items: center; gap: 6px; align-self: end; padding-bottom: 8px; }
   input, select { font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; min-width: 0; }
   .summary { margin: 14px 0 0; font-size: 14px; }
   .summary.error { color: var(--error); }
@@ -72,6 +73,12 @@
       </label>
       <label>Markers
         <input name="count" type="number" min="4" step="1" placeholder="Auto">
+      </label>
+      <label class="check">
+        <input name="invert" type="checkbox"> Black band (inverted markers)
+      </label>
+      <label>Max strip length (mm)
+        <input name="strip" type="number" min="10" step="1" placeholder="Auto">
       </label>
       <label>Dictionary
         <select name="dict">
@@ -125,6 +132,8 @@
         height: parseFloat(f.height.value),
         count: parseInt(f.count.value, 10) || 0,
         dictSize: parseInt(f.dict.value, 10),
+        maxStrip: parseFloat(f.strip.value) || 0,
+        invert: f.invert.checked,
       },
       output: f.output.value,
     };

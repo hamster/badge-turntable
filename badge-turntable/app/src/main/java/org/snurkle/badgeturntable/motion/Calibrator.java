@@ -38,10 +38,10 @@ public final class Calibrator {
         // 1. Spin one full turn: speed, direction, start latency.
         status.accept("Spinning one full turn…");
         long sent = System.currentTimeMillis();
-        table.press(Role.START_STOP);
+        table.start();
         long movedAt = waitForMovement(start, 3000);
         if (movedAt < 0) {
-            table.press(Role.START_STOP);
+            table.start();
             movedAt = waitForMovement(start, 3000);
             if (movedAt < 0) throw new MoveFailedException(MoveFailedException.Reason.NO_MOVEMENT, "no movement");
         }
@@ -56,11 +56,11 @@ public final class Calibrator {
         for (int i = 0; i < runs; i++) {
             status.accept("Measuring stop distance (" + (i + 1) + "/" + runs + ")…");
             RingReading atStop = ring.get();
-            table.press(Role.START_STOP);
+            table.stop();
             double settled = table.waitForStable(5000, 0.5, 300);
             if (atStop.ok() && !Double.isNaN(settled)) overshoot += cal.forward(atStop.angleDeg, settled);
             if (i < runs - 1) {
-                table.press(Role.START_STOP);
+                table.start();
                 Thread.sleep(1500);
             }
         }
@@ -72,7 +72,16 @@ public final class Calibrator {
             double before = table.waitForStable(3000, 0.5, 300);
             table.press(Role.STEP_90);
             double after = table.waitForStable(15_000, 0.5, 400);
-            if (!Double.isNaN(before) && !Double.isNaN(after)) cal.step90Deg = cal.forward(before, after);
+            if (!Double.isNaN(before) && !Double.isNaN(after)) {
+                cal.step90Deg = cal.forward(before, after);
+                // Catches a profile whose Step_90 button isn't really a 90° step (e.g. a swing
+                // button, which is what the JAYEGT's 45/90/180 buttons turned out to be).
+                if (Math.abs(cal.step90Deg - 90) > 15) {
+                    throw new MoveFailedException(MoveFailedException.Reason.STEP_SIZE, String.format(
+                            "The 90° step button turned the table %.0f°, not 90°. Check which button the turntable "
+                            + "profile uses for the 90° step.", cal.step90Deg));
+                }
+            }
         }
 
         // 4. Home to marker 0 and make it the table's own origin too.

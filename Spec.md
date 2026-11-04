@@ -1,6 +1,6 @@
 # Badge Turntable — Spec
 
-Draft 2 · Nov 3, 2026. Background research (IR APIs, viewer libraries, hosting limits) is in [Overview.md](Overview.md). The encoder ring has its own page, [encoder-ring/README.md](encoder-ring/README.md). Where documents disagree, this spec wins.
+Draft 3 · Nov 3, 2026. Background research (IR APIs, viewer libraries, hosting limits) is in [Overview.md](Overview.md). The encoder ring has its own page, [encoder-ring/README.md](encoder-ring/README.md). Where documents disagree, this spec wins.
 
 ## App identity
 
@@ -16,6 +16,8 @@ An Android app, written in Java, that photographs a badge on an IR-controlled tu
 
 One capture produces four high-resolution stills (0°, 90°, 180°, 270°, with 0° being the front of the badge) and an optional 360° spin video. Extra shots, such as the lanyard or add-ons installed, can be added to the same badge. Everything is written into a badge folder laid out like the repo's, including an `index.md` filled from [_template/index.md](../_template/index.md). The folder is saved locally and optionally synced to a Samba share. The rest of the badge details are filled in later on a PC with the web editor.
 
+Typing on a phone clamped in a tripod is awkward, so the app can also be driven from the PC. The web editor connects to the phone over the local network, shows a live preview, runs calibration and captures, and saves the photos straight into the repo with the badge details. See [Remote control from the editor](#remote-control-from-the-editor).
+
 ## Platform and stack
 
 | Area | Choice | Notes |
@@ -30,6 +32,8 @@ One capture produces four high-resolution stills (0°, 90°, 180°, 270°, with 
 | IR learning (optional) | usb-serial-for-android | Reads raw timings from a USB IR receiver (see [Turntable profiles](#turntable-profiles)). |
 | Background sync | WorkManager | Retries, network constraints. |
 | Secrets | Android Keystore | Encrypts the Samba password at rest. `androidx.security-crypto` is deprecated, so don't use it. |
+| Remote control server | NanoHTTPD + `nanohttpd-websocket` | Small pure-Java HTTP and WebSocket server, about 100 KB. Unmaintained since 2.3.1 (2016) but stable, and this is a LAN-only tool. If it causes trouble, AndroidAsync is the fallback. |
+| Local name | JmDNS | Pure-Java mDNS responder. Answers for `badge-turntable.local` and advertises an `_badge-turntable._tcp` service. Needs a Wi-Fi `MulticastLock` while running. |
 
 ### Target phone: OnePlus 13
 
@@ -37,8 +41,23 @@ One capture produces four high-resolution stills (0°, 90°, 180°, 270°, with 
 - It ships with Android 15, so it's well above minSdk.
 - It has three rear cameras: main, 3× telephoto and ultrawide (the ultrawide doubles as macro).
 - **Unknowns:** how much manual control (ISO, shutter, focus distance, Kelvin white balance) OnePlus exposes to third-party apps through Camera2, and which physical lenses an app can select. Phase 1 starts with a **capabilities probe** screen that lists the hardware level, capabilities and lenses, so the controls offered match what the phone actually allows.
-- **IR reach:** the phone sits on a tripod outside the light box, looking in through the front opening. The blaster is on the phone's top edge, so it points up (in portrait) or sideways (in landscape), not into the box. The JAYEGT's IR receiver is probably on the front of the base, facing the camera.
-  - **Plan:** a small clip-on reflector over the blaster (white card or foil at about 45°) that bounces the beam forward through the opening toward the receiver.
+- **Probe results (Nov 4, 2026):** the phone reports itself as OnePlus CPH2749 on Android 16 (API 36).
+  - **IR blaster:** present, carriers 20–60 kHz, so 38 kHz NEC is fine.
+  - **Cameras:** every camera is `LEVEL_3` with `MANUAL_SENSOR`, `MANUAL_POST_PROCESSING`, RAW, burst and 10-bit, so manual ISO, shutter, focus distance and white balance are all available to the app. Sensor timestamps are realtime, so video trims will line up with the angle log.
+  - **Lenses:** camera 0 is a logical back camera made of physical cameras 2, 3 and 4. All three are also listed on their own, so each lens can be selected directly.
+
+    | Camera | Lens | Focal length | Closest focus | ISO | Max JPEG |
+    | --- | --- | --- | --- | --- | --- |
+    | 0 | Logical back camera (2, 3, 4) | 5.59 mm | 10 cm | 100–6400 | 4096×3072 |
+    | 2 | Main | 5.59 mm | 10 cm | 100–6400 | 4096×3072 |
+    | 3 | Ultrawide / macro | 2.31 mm | 3.5 cm | 100–6200 | 4096×3072 |
+    | 4 | Telephoto | 12.19 mm | 40 cm | 100–16000 | 4096×3072 |
+    | 1 | Front | 3.23 mm | 14.2 cm | 100–3200 | 3280×2464 |
+
+    The telephoto can't focus closer than 40 cm, so the tripod distance decides whether it's usable in the light box.
+- **IR reach:** the phone sits on a tripod outside the light box, looking in through the front opening. The blaster is on the phone's top edge, so it points up (in portrait) or sideways (in landscape), not into the box. The JAYEGT's IR receiver looks to be on the **back** of the base, behind the indicator LED, facing away from the camera.
+  - **Orientation:** the base doesn't turn, only the platter does, so the base can be set in the box with its back toward the opening. That puts the receiver facing the camera. The back-panel buttons stay reachable from the front, and the encoder ring is unaffected because it reads the platter rim.
+  - **Plan:** a small clip-on reflector over the blaster (white card or foil at about 45°) that bounces the beam forward through the opening toward the receiver. With the base the usual way round, the beam would have to bounce off the light box's back wall instead, which white walls may do well enough. Phase 3 tests that.
   - **Fallback:** a cheap external IR LED aimed at the receiver.
   - Phase 3 tests both.
 
@@ -47,7 +66,9 @@ One capture produces four high-resolution stills (0°, 90°, 180°, 270°, with 
 1. **Sessions (home).** A list of capture sessions, each with a thumbnail, title, con/year, `badge_id`, capture count and sync status (local only / pending / synced / failed). Actions: **New session**, open a session to **edit/append**, **Sync now**, delete.
 2. **New/edit session.** Badge identity fields, session options, and the list of captured files, which can be re-captioned, reordered or deleted. See [Sessions](#sessions).
 3. **Capture.** A full-screen live preview with camera controls, the turntable status, the **Capture** and **Extra shot** buttons, and the auto/manual toggle. Everything happens here, including calibration.
-4. **Settings.** Samba, turntable/IR, capture defaults, calibration status and the capabilities probe.
+4. **Settings.** Remote control, Samba, turntable/IR, capture defaults, calibration status and the capabilities probe.
+
+When remote control is on, the Capture screen also shows the phone's name, address and pairing code, plus which PC is connected. With the editor doing the typing, screens 1 and 2 are only needed when using the phone on its own.
 
 ## Camera preview and controls
 
@@ -72,15 +93,18 @@ The app ships with a profile for your turntable, but any turntable can be set up
 
   | Feature | JAYEGT 5.74 in |
   | --- | --- |
-  | Platter | About 146 mm diameter (about 458 mm circumference, to measure), black |
+  | Platter | 145.3 mm diameter, measured (456.5 mm circumference), black. Rim height 9.6 mm, with a slight draft: 145.25 to 145.9 mm across its height. Generate the ring at 460.9 mm: the ZD500 feeds about 0.8% short, so a band generated for 456.5 mm printed at about 452.9 mm and left a 4.46 mm gap. |
   | Control type | Continuous + positions |
-  | Remote: motion | On/Pause, Turn Left, Turn Right, +Speed, −Speed |
-  | Remote: modes | Resume Continuous Rotation, Intermittent Rotation |
-  | Remote: steps | 45°, 90°, 180° |
+  | Remote: motion | On/Pause, Turn Left, Turn Right, +Speed, −Speed. On/Pause toggles; after a pause in intermittent mode it resumes in continuous mode. Turn Left/Right from rest always starts continuous rotation that way, so the app starts moves with Turn Right. |
+  | Remote: modes | Resume Continuous Rotation, Intermittent Rotation. Intermittent turns one way and stops at uneven intervals of about 120°, so the app doesn't use it. |
+  | Remote: swing | 45°, 90°, 180°. These are **not steps**: they set how far the platter rocks back and forth in swing mode, and start swinging from rest. Not used by the app. |
   | Remote: homing | Set Origin Position, Back to Set Position |
-  | Remote: unknown | One unlabeled bottom button (to identify) |
+  | Remote: step | The unlabeled bottom button (NEC 0x46) advances 90° and stops. This is the app's step for each view. It's always 90°: the ASA button doesn't change it. |
   | Speeds | 8, 15 and 30 s per revolution |
-  | IR codes | Not captured yet (probably NEC at 38 kHz) |
+  | Base buttons (back) | **R/L** (direction), **SR** (speed: 8, 15 or 30 s per revolution; holding it stops the rotation), **ASA** (starts swing mode; pressing it again changes the swing angle, like the remote's 45/90/180 buttons. It doesn't affect the step). SR and ASA have no IR codes: of the [unused codes](ir-tools/README.md#jayegt-574-in-remote) on the remote this one is based on, only 0x19 does anything, and it duplicates On/Pause. |
+  | IR receiver | Probably behind the indicator LED on the back of the base (to confirm: cover it and check that the remote stops working) |
+  | Power | Rechargeable battery and no power switch: it stays on until the battery runs flat. A tiny red charging LED sits under the ASA button. Keep it on USB power while capturing: a flat battery also loses the origin set with Set Origin (the app recovers, see [Positioning](#positioning)), and a low battery may slow the motor, so speed and overshoot would drift away from the calibration. The positioning check would catch that, but only as failed moves. |
+  | IR codes | Captured: NEC, address 0x00, in [jayegt-5.74.ir](badge-turntable/app/src/main/assets/profiles/jayegt-5.74.ir). See [ir-tools/README.md](ir-tools/README.md#jayegt-574-in-remote) |
 
 - **Custom:** the user picks a **control type**, then sets up the buttons:
   - *Continuous only:* `start/stop` is required. `direction` and `speed+/-` are optional.
@@ -108,28 +132,20 @@ Every role has a **Test** button. A profile can be exported as a Flipper `.ir` f
 The table's angle is read from a printed **encoder ring**: a band of ArUco markers (OpenCV `DICT_4X4_50`) wrapped around the turntable rim, facing the camera. [encoder-ring/README.md](encoder-ring/README.md) explains the maths and covers making, printing and fitting the ring. The generator (a browser page and a Node script) prints it on US Letter or A4 paper, or as ZPL for 4×6 in labels.
 
 - Marker *k* is centred at *k* × step degrees. A 200 mm rim with a 16 mm band gets 36 markers at 10°.
-- For each analysis frame (CameraX `ImageAnalysis`, about 720p), the app detects the visible markers. It then fits their horizontal positions to `x = x_axis + A·sin α + B·cos α`, a linear least-squares fit. That gives the table angle θ = atan2(−B, A) along with the axis position and rim radius in the image.
-- Because each frame calibrates itself, zooming or nudging the phone doesn't break the angle reading. It needs three or more visible markers. On synthetic images the fit is within 0.07°; expect about ±1° in practice.
+- For each analysis frame (CameraX `ImageAnalysis`, about 720p), the app detects the visible markers. It then fits their horizontal positions to `x = x_axis + A·sin α + B·cos α`, a linear least-squares fit. That gives the table angle θ = atan2(−B, A) along with the axis position and rim radius in the image. With five or more markers, a perspective term then refines the fit (next point).
+- Because each frame calibrates itself, zooming or nudging the phone doesn't break the angle reading. It needs three or more visible markers. At light-box distances the camera is only a few rim radii away, so the fit includes perspective (see [encoder-ring/README.md](encoder-ring/README.md#from-markers-to-an-angle)). On simulated camera images that gives about 0.1° (worst 0.5°). Print scale and how evenly the band is wrapped will add to that in practice.
 - The ring makes moves **closed-loop**: the app sends IR, watches the angle, and knows whether the table moved and where it stopped.
 
-> **Design not final.** The plan doc proposes a different strip: 64 ticks at 5.625° (about 7.2 mm apart on the JAYEGT) above a code track carrying a de Bruijn B(2,6) sequence. Any 6 consecutive bits give the absolute position, and a wider gap marks 0°.
+> **Decided: ArUco band.** The plan doc proposed 64 ticks plus a de Bruijn code track for thin rims. The JAYEGT's rim is 9.6 mm tall, enough for a 9.5 mm ArUco band: 45 markers of 7.1 mm at 8°. In simulation (OpenCV rendering of the band on a 146 mm cylinder, camera 300–600 mm away, lens and spin motion blur, sensor noise) 7 or more markers were found in every frame down to 2.5 px/mm, about 3 px per marker cell.
 >
-> | | ArUco band (built) | Ticks + de Bruijn (plan doc) |
-> | --- | --- | --- |
-> | Rim height needed | About 8 mm or more for reliable markers. A 10 mm band gives 45 markers of 7.5 mm on the JAYEGT. | Works on thinner rims: two short rows. |
-> | Detection | Off-the-shelf OpenCV `ArucoDetector`, robust to blur and lighting | Custom decoder: sample along the strip, threshold the bits, fit tick edges |
-> | Precision | Fit over about 13 markers: 0.07° synthetic, about ±1° expected | Sub-pixel tick edges: under 0.5° expected |
-> | Setup | Each frame calibrates itself | Needs an ellipse-fitting calibration spin, redone if the tripod moves |
-> | Status | Generator, docs and detection test done | Not started |
->
-> The deciding factor is the JAYEGT's usable rim height. If it's 8 mm or more, keep the ArUco band. If it's thinner, switch to ticks + de Bruijn and rework the generator for it.
+> The band can also be printed black with inverted (white-bordered) markers, so it blends with the black platter in photos (`make-ring.mjs --invert`). The detector reads either kind.
 
 ### Calibration
 
 Calibration learns how the table moves and where zero is. Steps:
 
 1. The user taps **Calibrate**. The app checks that the ring can be read in the preview. If it can't, it shows "Can't see the encoder ring" with framing tips.
-2. The app sends `start` (continuous rotation) and tracks the angle.
+2. The app sends `start` (continuous rotation; on the JAYEGT that's Turn Right, which works from any mode) and tracks the angle.
    - If the angle doesn't change within 3 s, it resends once, then fails with "The turntable didn't move. Check that IR reaches the table and that the turntable profile is correct."
 3. The table turns at least one full revolution, or until the zero marker has been seen crossing the axis twice. Meanwhile the app measures the **rotation speed** (°/s), the **direction** (including whether the strips were applied upside down), and how repeatable a full turn is.
 4. The app sends `stop` and measures **stop latency and overshoot** (the angle when stop was sent versus the angle once the table settles). This is repeated 2–3 times and averaged. If the profile has step buttons, each step size is measured too.
@@ -147,8 +163,8 @@ If any check fails, the user is prompted to calibrate before an auto capture can
 
 ### Positioning
 
-- **Moving to an angle:** if the remote has a suitable step button, the app uses it and then checks the result. On the JAYEGT, that's one 90° press per view. Otherwise it sends `start`, then sends `stop` early by the measured overshoot.
-- **Homing:** the app uses `return to origin` when the profile has it, then checks the result against the ring.
+- **Moving to an angle:** if the remote has a suitable step button, the app uses it and then checks the result. On the JAYEGT, that's one press of the unlabeled step button per view. If calibration measures the step as something other than about 90° (for example because the profile maps a swing button to the step role), it stops and says so. Otherwise it sends `start`, then sends `stop` early by the measured overshoot.
+- **Homing:** the app uses `return to origin` when the profile has it, then checks the result against the ring. `Return to origin` only works once the table's own origin has been set, and the table loses it if the battery runs flat. So if it doesn't land within tolerance of zero, the app homes by the ring instead and presses `set origin` there, which makes the next `return to origin` work again. Calibration also sets the origin at zero.
 - **Tolerance:** within ±2° (configurable) counts as on target. The actual angle reached is recorded with each still.
 - **No movement:** if a move command produces less than 2° of change within the expected time plus 1.5 s, the app resends once, then reports a **move failure**.
 - **Lost ring:** if the ring can't be read during a move (for example a large badge blocks it), the app reports that as its own failure.
@@ -323,9 +339,129 @@ The app never runs git. Committing stays a PC step.
 - **After "Save locally only":** the session stays marked for sync and uploads automatically the next time the share can be reached.
 - **Clashes:** if a new session's slug already exists on the share, the app warns before overwriting. Appending to an existing session merges into its folder.
 
+## Remote control from the editor
+
+The phone sits in a tripod, where typing is awkward and the screen is hard to see. Instead, the web editor at `/edit/` can drive the app from the PC: find the phone on the network, show a small live preview, run calibration and captures (including extra shots), and save the photos straight into the repo along with the badge's details. No server runs on the PC: the phone is the server, and the editor page talks to it directly from JavaScript.
+
+```mermaid
+flowchart LR
+  subgraph PC["PC: Chrome or Edge"]
+    E["Web editor (/edit/)<br>from GitHub Pages or jekyll serve"]
+    R[("Repo folder<br>File System Access")]
+  end
+  subgraph Phone["Phone in the tripod"]
+    S["App: HTTP + WebSocket server<br>badge-turntable.local:8737"]
+    C["Camera, ring, IR, sequencer"]
+  end
+  E -- "fetch: commands, files" --> S
+  E <-. "WebSocket: preview, status" .-> S
+  S --- C
+  E -- "save" --> R
+```
+
+### How the browser allows it
+
+The editor is served over HTTPS, and the phone is a plain-HTTP device on the LAN. Browsers normally block that as mixed content. Chrome's [Local Network Access](https://developer.chrome.com/docs/modern-web-guidance/guides/security/local-network-access) rules (also in Edge, which is Chromium) allow it once the user grants the site a one-time "access devices on your local network" permission:
+
+- **fetch:** requests pass `targetAddressSpace: 'local'`. That exempts `http://` to a local address from mixed-content blocking once the permission is granted.
+- **WebSocket:** `ws://` from an HTTPS page is exempt when the host is a private IP literal (such as `192.168.10.23`) or a `.local` name. The WebSocket constructor takes no options, so it can't use a hostname that only resolves locally.
+- **CORS:** the phone sends ordinary CORS headers for the editor's origins. The older Private Network Access preflight headers (`Access-Control-Allow-Private-Network`) are deprecated and not needed.
+- **First request:** the editor checks `navigator.permissions.query({name: 'local-network'})`. If it's `prompt`, the first request is made from a click (the **Connect** button), so the permission prompt can appear. The editor listens for permission changes, so a later revoke shows up as "Not allowed to reach local devices", with a pointer to site settings.
+
+The editor already needs Chrome or Edge for File System Access, so this adds no new browser limits. Firefox and Safari would block these requests.
+
+### Finding turntables
+
+A web page can't browse mDNS or broadcast on the network, so true discovery isn't possible from JavaScript. The editor gets close:
+
+1. **A fixed name.** The app answers mDNS for `badge-turntable.local` (the name is set in Settings, e.g. `badge-turntable-2` for a second phone) and also advertises an `_badge-turntable._tcp` service for other tools. The editor probes each known name, so on most networks the phone just appears. Windows 10 and later resolve `.local` names.
+2. **Remembered devices.** Every phone the editor has paired with is kept in `localStorage`, by both name and last IP address.
+3. **Add by address.** The phone's Capture screen shows its name, IP address and port. Typing these once covers networks where `.local` doesn't resolve, for example some VPNs, or Wi-Fi with client isolation or multicast filtering.
+
+A probe is `GET /api/info` with a 1.5 s timeout, sent to every candidate at once. Each phone that answers is listed with its name, model, status and whether it's paired. A DHCP reservation for the phone helps, but isn't needed while `.local` works.
+
+### Pairing and security
+
+The API runs a camera and an IR blaster, so it's not open to anyone on the network:
+
+- **Off by default.** The server only runs while **Settings → Remote control** is on and the app is in the foreground. It listens on Wi-Fi only, on port 8737 (configurable).
+- **Pairing.** On the first connection the phone shows a 6-digit code, and the user types it into the editor. `POST /api/pair` swaps the code for a random 128-bit token, which the editor keeps in `localStorage` for that phone. Codes expire after 2 minutes, and five wrong guesses lock pairing for a minute. **Settings → Remote control** lists paired PCs and can revoke them.
+- **Every request** carries `Authorization: Bearer <token>`, except `/api/info` and `/api/pair`. Browsers can't set headers on a WebSocket, so its first message must be `{"token": …}`, and the phone closes the socket if it isn't.
+- **Origins.** CORS allows only `https://hamster.github.io`, `http://localhost:4000` and `http://127.0.0.1:4000` (`jekyll serve`), plus any extra origins added in Settings. CORS only restrains browsers; the token is what keeps other clients out.
+- **Plain HTTP.** Traffic, including the token, is unencrypted on the LAN. That's acceptable on a home network, and the token can be revoked. If it isn't acceptable, HTTPS would need a certificate the browser trusts for a LAN address, which is a lot of setup for little gain.
+
+### On the phone
+
+- The Capture screen stays open with the screen on, as it does for local use, because the camera needs the app in the foreground. A banner shows "Controlled from &lt;PC name&gt;". Local controls still work.
+- **One job at a time.** Calibration, a capture sequence or an extra shot is a job. A command that needs the camera or turntable while a job runs gets `409 Busy`. **Stop** on either side aborts the job.
+- **Prompts.** Moments that need a decision, such as a move failure (**Retry**, **Switch to manual** or **Stop**) or a manual-mode instruction ("Turn the table to 90°"), show on both the phone and the editor. The first answer wins.
+- **If the app goes to the background,** the server stops and the editor shows the phone as disconnected. Shots taken so far are kept on the phone.
+- **Shots.** In remote mode, the phone keeps a single unnamed set of shots: no badge identity, slug or `index.md`. Files use the standard names (`front.jpg`, `lanyard.jpg`, …), and the editor decides where they go. The phone keeps the shots until the editor clears them after saving.
+
+### API
+
+JSON over HTTP, at `http://<phone>:8737/api/`. Errors return `{"error": "<code>", "message": "<text for the user>"}` with a matching HTTP status.
+
+| Method and path | Purpose |
+| --- | --- |
+| `GET /info` | No auth. Name, phone model, app and API versions, a stable device ID, and whether this browser's token is still valid (if one is sent) |
+| `POST /pair` | `{code, clientName}` → `{token}` |
+| `GET /status` | Turntable profile, calibration summary, ring reading, camera settings, current job, shot count |
+| `GET /camera` / `POST /camera` | Capabilities (from the probe) and current settings / change them: lens, zoom, focus point (normalised x, y), focus lock, EV, ISO and shutter, white balance and locks. Saved to the light box profile, as on the phone |
+| `POST /turntable/press` | `{role}`: press one button, the same as the Test buttons |
+| `POST /turntable/move` | `{degrees}` or `{home: true}`: a closed-loop move |
+| `POST /calibrate` | Start calibration. Returns `202 {jobId}` |
+| `POST /capture` | `{video, auto, setLabel}`: a turntable set, or an extra set when `setLabel` is given. `202 {jobId}` |
+| `POST /extra` | `{label}`: one extra shot. `202 {jobId}` |
+| `POST /jobs/current/answer` | Answer a prompt: `{answer: "retry" \| "manual" \| "stop" \| "ready"}` |
+| `DELETE /jobs/current` | Abort the job |
+| `GET /shots` | The shots held: ID, kind (view, extra, spin), label, standard file name and caption, nominal and actual angle, time, size, and dimensions |
+| `GET /shots/{id}` | The web copy (2400 px JPEG, or the transcoded MP4). `?variant=original` gives the full-resolution file or source video |
+| `DELETE /shots/{id}`, `DELETE /shots` | Drop one shot, or all of them after saving |
+| `GET /session.json` | The capture record (actual angles, camera settings, calibration), for `_capture/` |
+
+**WebSocket `/live`.** After the token message, the phone sends:
+
+- **status** about twice a second: job state, ring angle, marker count, calibration state;
+- **ring** about 5 times a second: angle plus marker centres and the axis line in normalised image coordinates, so the editor can draw the overlay itself;
+- **job events:** progress ("Moving to 90°…"), prompts, shots as they're taken, and done or failed;
+- **preview frames** as binary messages, each a JPEG with a small header giving the frame time and rotation.
+
+The editor can send `{"preview": {"fps": 8, "width": 640}}` to change the preview, or `{"preview": false}` to pause it, for example while the tab is hidden. Preview frames come from the `ImageAnalysis` frames the ring detector already gets. They're scaled to 640 px and JPEG-encoded at quality 70, about 30–40 KB each, so 8 fps is roughly 300 KB/s. No extra camera stream is needed.
+
+### In the editor
+
+A **Turntable** panel in `/edit/` (its own script, `edit/turntable.js`) contains:
+
+- **Devices:** the probe list, **Add by address**, **Connect** (which triggers the browser permission) and pairing.
+- **Preview:** the live JPEG frames, with the ring overlay and angle readout. Click to focus there. Controls for lens, zoom, exposure, white balance and locks.
+- **Turntable:** **Calibrate** (with progress and summary), **Step 90°**, **Home**, and a Test button for each role.
+- **Capture:** **Capture** (with a video on/off toggle), **Extra shot** with the same label chips as the phone, **Extra set**, and **Stop**. Prompts appear as dialogs.
+- **Shots tray:** thumbnails of what the phone holds. **Add to badge** downloads the web copies as files and adds them to the editor's media list, the same way a drag-and-drop does. They keep their standard names and captions, in the [standard order](#extra-shots), with `front.jpg` highlighted.
+
+Then the editor works as it does today: the user fills in the fields, the badge ID suggestion comes from the repo it has open, and **Save** writes `_badges/<con>/<slug>/`. Two options appear when shots came from the turntable:
+
+- **Also save originals:** writes the full-resolution stills, the source video and `session.json` to `_capture/<con>/<slug>/` in the same repo folder. Jekyll ignores folders starting with `_`, and `_capture/` gets added to `.gitignore`, so the originals are neither published nor committed.
+- **Clear shots on the phone after saving** (on by default).
+
+### What this changes elsewhere
+
+- **Phone screens:** Sessions and New/edit session stay, for using the phone on its own, but they're no longer the main path.
+- **`index.md` and badge IDs on the phone:** only used without the editor. In remote mode the editor builds `index.md` and suggests the ID.
+- **Samba:** optional, and moves to a later phase. Files reach the repo through the editor instead.
+
+### Risks to check first
+
+A spike settles these before the rest is built: a bare server on the phone serving `/api/info`, a preview WebSocket and one still, plus a test page on GitHub Pages.
+
+1. **Permission flow:** the Local Network Access prompt and its persistence in Chrome and Edge, from the GitHub Pages origin, for both fetch and `ws://`. The docs don't say how long a grant lasts.
+2. **Name resolution:** `.local` from Windows Chrome to JmDNS on the phone. Some routers filter multicast or isolate Wi-Fi clients. Manual address entry is the fallback.
+3. **Preview cost:** frame rate, latency and phone CPU for 640 px JPEG previews alongside ring detection.
+4. **Transfer time:** pulling 4 stills of about 1 MB each plus a spin video of about 10 MB over Wi-Fi. Expected to take a few seconds.
+
 ## Site changes
 
-The app depends on, or benefits from, two changes to the badge museum site itself.
+The app depends on, or benefits from, these changes to the badge museum site itself.
 
 ### `badge-ids.json` (done)
 
@@ -345,11 +481,15 @@ The app depends on, or benefits from, two changes to the badge museum site itsel
 - **Caching:** results are cached by source hash with `actions/cache`, so unchanged media is copied rather than re-encoded.
 - **In the repo:** to shrink oversized videos before committing, run `python .github/scripts/optimize_media.py --root _badges --no-images`.
 
+### Editor Turntable panel (planned)
+
+A **Turntable** panel in `/edit/` that drives the phone over the LAN and saves its shots with the badge. See [Remote control from the editor](#remote-control-from-the-editor). It also adds `_capture/` to `.gitignore` for the optional originals.
+
 ## Build phases
 
 The order puts a usable tool in hand early, before the riskier IR and vision work.
 
-A first-draft project for phases 1–6 is in [badge-turntable/](badge-turntable/). It covers the screens, camera, ring detector, turntable control, sequencer, transcoder and sync. Its plain-Java core is unit-tested, but the Android code has never been compiled. [badge-turntable/README.md](badge-turntable/README.md) lists what's missing and what will likely need fixing.
+A first-draft project for phases 1 and 3–7 is in [badge-turntable/](badge-turntable/). It covers the screens, camera, ring detector, turntable control, sequencer, transcoder and Samba sync, but not remote control. Its plain-Java core is unit-tested, but the Android code has never been compiled. [badge-turntable/README.md](badge-turntable/README.md) lists what's missing and what will likely need fixing.
 
 1. **Camera and manual capture.**
    - Capabilities probe, preview and camera controls, light box profile.
@@ -357,12 +497,13 @@ A first-draft project for phases 1–6 is in [badge-turntable/](badge-turntable/
    - Manual-mode stills, extra shots, `index.md` and the folder writer.
 
    This is already useful with the table turned by hand.
-2. **Samba.** Settings, test connection, sync worker and the pre-capture alert.
+2. **Remote control.** Start with the spike from [Risks to check first](#risks-to-check-first). Then the server, mDNS name, pairing, preview WebSocket and shots API on the phone, and the Turntable panel and save options in the editor. Calibration and capture commands start with manual mode and are completed as phases 4–6 land.
 3. **IR and profiles.** Build the profile for your turntable, the Custom setup screens, `.ir` import and the test buttons, and prove that IR reflected inside the light box moves the table.
 4. **Encoder ring.** The generator is done ([encoder-ring/](encoder-ring/)). This phase adds the detector, the live angle overlay, the manual-mode dial and the ring check.
 5. **Calibration and auto mode.** Motion calibration, closed-loop moves, the auto sequence, extra sets and failure handling.
 6. **Spin video.** Recording with an angle log, trimming to one revolution, transcoding.
-7. **IR learning.** The USB receiver and firmware, encoder-ring scanning, and the camera-learning spike.
+7. **Samba (optional).** Settings, test connection, sync worker and the pre-capture alert. Only needed for using the phone without the editor.
+8. **IR learning.** The USB receiver and firmware, encoder-ring scanning, and the camera-learning spike.
 
 ## Decided
 
@@ -374,13 +515,16 @@ A first-draft project for phases 1–6 is in [badge-turntable/](badge-turntable/
 - **Language:** Java.
 - **Turntable:** JAYEGT 5.74 in, with step and homing buttons.
 - **Photos in the repo:** the 2400 px web copies. Full resolution stays in `_capture/`.
+- **Badge details are entered on the PC:** the web editor drives the phone over the LAN ([Remote control from the editor](#remote-control-from-the-editor)). The phone's own session screens stay, for use without a PC.
 
 ## Open questions
 
 Each question has a proposed default in brackets.
 
-1. **Encoder ring design:** ArUco band or ticks + de Bruijn (see the note under [Encoder ring](#encoder-ring))? This depends on the JAYEGT's usable rim height. [ArUco if the rim is 8 mm or more.]
-2. **JAYEGT measurements:** the exact circumference, the usable rim height, and the real seconds per revolution at each speed.
-3. **IR codes:** capture the JAYEGT remote (Flipper, or Pico + TSOP), and find out what the unlabeled button does.
+1. **Encoder ring design:** decided, ArUco band (the rim is 9.6 mm; see [Encoder ring](#encoder-ring)).
+2. **JAYEGT measurements:** the real seconds per revolution at each speed. The diameter (145.3 mm) and rim height (9.6 mm) are measured.
+3. **IR codes:** captured with an IguanaIR receiver ([ir-tools/](ir-tools/)). The unlabeled button (0x46) turned out to be the 90° step. Back to Set needs Set Origin first. The unused codes have been tried: only 0x19 does anything (the same as On/Pause). ASA only controls swing mode, so no turntable setting has to be left in a particular position for auto capture.
 4. **Media hosting:** the plan doc chose Cloudflare R2 for web media, with only JSON and thumbnails in the repo. This spec keeps the web copies in the repo and uses build-time thumbnails to cut bandwidth. Is R2 still wanted? [Not for now: thumbnails first, revisit R2 when the site nears 1 GB or 100 GB/month.]
-5. **Top sticker:** the plan doc also proposes a print-and-cut alignment sticker for the platter top (zero line, 90° ticks, centering rings, cut on a Silhouette Cameo). Should the generator make that too? [Yes, as an SVG for Print & Cut, once the platter is measured.]
+5. **Remote control port and name:** [Port 8737, name `badge-turntable`, both changeable in Settings.]
+6. **Originals from remote captures:** should **Also save originals** default to on? [Off: originals are about 10× the size of the web copies, and the phone keeps them until cleared.]
+7. **Top sticker:** the plan doc also proposes a print-and-cut alignment sticker for the platter top (zero line, 90° ticks, centering rings, cut on a Silhouette Cameo). Should the generator make that too? [Yes, as an SVG for Print & Cut, once the platter is measured.]

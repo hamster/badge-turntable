@@ -19,7 +19,7 @@ function parseArgs(argv) {
   const args = { paper: 'letter', dpi: 203, dict: 50, height: 16, out: '.', pxPerMm: 8 };
   for (let i = 0; i < argv.length; i++) {
     const key = argv[i].replace(/^--/, '');
-    const flag = ['zpl', 'docs', 'help'].includes(key);
+    const flag = ['zpl', 'docs', 'help', 'invert'].includes(key);
     if (flag) { args[key] = true; continue; }
     const value = argv[++i];
     if (value === undefined) throw new Error(`--${key} needs a value`);
@@ -39,12 +39,13 @@ function write(dir, name, text) {
 function ringPgm(plan, pxPerMm) {
   const w = Math.round(plan.circumference * pxPerMm);
   const h = Math.round(plan.height * pxPerMm);
-  const px = new Uint8Array(w * h).fill(255);
+  const bg = plan.invert ? 0 : 255;
+  const px = new Uint8Array(w * h).fill(bg);
   const ids = Array.from({ length: plan.count }, (_, i) => i);
   for (const q of stripRects(plan, ids)) {
     const x0 = Math.round(q.u * pxPerMm), x1 = Math.round((q.u + q.w) * pxPerMm);
     const y0 = Math.round(q.v * pxPerMm), y1 = Math.round((q.v + q.h) * pxPerMm);
-    for (let y = y0; y < y1; y++) px.fill(0, y * w + x0, y * w + x1);
+    for (let y = y0; y < y1; y++) px.fill(255 - bg, y * w + x0, y * w + x1);
   }
   return Buffer.concat([Buffer.from(`P5\n${w} ${h}\n255\n`), Buffer.from(px)]);
 }
@@ -73,6 +74,8 @@ function main() {
     height: args.height,
     count: args.count,
     dictSize: args.dict,
+    maxStrip: args.stripLength,
+    invert: args.invert,
   });
   console.log(summary(plan));
 
@@ -93,6 +96,10 @@ const readmeUsage = `Usage: node make-ring.mjs (--diameter MM | --circumference 
 
   --height MM        usable rim band height (default 16)
   --count N          marker count (default: the most that fit, dividing 360 evenly)
+  --invert           black band with white-bordered markers, to blend with a black rim.
+                     Prints 1 mm of bleed past the cut lines; the app reads either kind.
+  --strip-length MM  longest strip to print (default: as long as the page allows).
+                     Shorter strips sit flatter on a rim with a draft angle.
   --dict 50|100|250  ArUco DICT_4X4 size (default 50)
   --paper letter|a4  paper size for SVG pages (default letter)
   --zpl              write ZPL for 4x6 in labels instead of paper SVGs

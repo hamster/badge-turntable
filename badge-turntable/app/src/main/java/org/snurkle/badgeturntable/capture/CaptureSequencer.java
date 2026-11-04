@@ -171,12 +171,12 @@ public final class CaptureSequencer {
         long recStartNs = camera.startRecording(source);
         try {
             if (o.auto && table != null) {
-                table.press(Role.START_STOP);
+                table.start();
                 long deadline = System.currentTimeMillis() + 120_000;
                 while (log.travelled() < 360 + o.videoOverlapDeg && System.currentTimeMillis() < deadline) {
                     Thread.sleep(50);
                 }
-                table.press(Role.START_STOP);
+                table.stop();
             } else {
                 l.awaitManualPosition("Start the table spinning, then tap Capture when it has gone all the way round", Double.NaN).get();
             }

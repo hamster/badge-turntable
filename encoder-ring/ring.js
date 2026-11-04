@@ -54,6 +54,9 @@ const PAPER_ROW_GAP = 5;
 const LABEL_MARGIN = 4;
 const LABEL_CAPTION = 3.5;
 const CROP = 2.5;
+// Inverted (black) bands print this far past every cut line, so a slightly off cut
+// still leaves black at the edge instead of a white sliver.
+const BLEED = 1;
 
 // 6x6 grid for one marker, true = black. The outer ring is the black border;
 // the inner 4x4 holds the code bits.
@@ -113,6 +116,12 @@ export function planRing(opts) {
     count,
     step: 360 / count,
     dictSize,
+    // Optional cap on strip length (mm). Shorter strips sit flatter on a tapered rim.
+    maxStrip: opts.maxStrip > 0 ? opts.maxStrip : Infinity,
+    // Black band with white-bordered (inverted) markers, to blend with a black rim.
+    // The detector needs detectInvertedMarker on. The quiet cells become black margin.
+    invert: !!opts.invert,
+    bleed: opts.invert ? BLEED : 0,
   };
 }
 
@@ -124,7 +133,7 @@ export function markerAngle(plan, id) {
 // its own pitch-long slot, so strips butted end to end keep the pitch, and the
 // ring's 0° is the centre of marker 0 (half a step after strip 1's left end).
 export function splitStrips(plan, maxLen) {
-  const perMax = Math.floor(maxLen / plan.pitch);
+  const perMax = Math.floor(Math.min(maxLen, plan.maxStrip ?? Infinity) / plan.pitch);
   if (perMax < 1) throw new Error('One marker is longer than the strip length available.');
   const stripCount = Math.ceil(plan.count / perMax);
   const per = Math.ceil(plan.count / stripCount);
@@ -177,22 +186,52 @@ export function stripCaption(plan, strip, ascii) {
 export function summary(plan) {
   return `${plan.count} markers x ${fmtAngle(plan.step)}°  |  rim ${plan.diameter.toFixed(1)} mm dia, ` +
     `${plan.circumference.toFixed(1)} mm around  |  band ${plan.height} mm, marker ${plan.marker.toFixed(1)} mm  |  ` +
-    `ArUco DICT_4X4_${plan.dictSize}`;
+    `ArUco DICT_4X4_${plan.dictSize}` + (plan.invert ? '  |  black band, inverted markers' : '');
 }
 
 const r2 = (n) => Math.round(n * 1000) / 1000;
 const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
 
+// How far each crop mark runs past its corner, along the strip edge. The marks for
+// the two cuts at a corner cross there, so after either cut a stub of the other mark
+// is left on the strip to show where the next cut goes. The stub lies on the cut line,
+// so a clean cut removes it. What's left of it is at the band edge (next to the black
+// rim) or about half a marker gap from the nearest marker, so it can't upset detection.
+const CROP_IN = 1.5;
+
 function cropMarks(x, y, w, h) {
-  // Short ticks just outside each corner, so nothing is printed on the strip edge itself.
-  const g = 1;
-  const lines = [
-    [x - g - CROP, y, x - g, y], [x, y - g - CROP, x, y - g],
-    [x + w + g, y, x + w + g + CROP, y], [x + w, y - g - CROP, x + w, y - g],
-    [x - g - CROP, y + h, x - g, y + h], [x, y + h + g, x, y + h + g + CROP],
-    [x + w + g, y + h, x + w + g + CROP, y + h], [x + w, y + h + g, x + w, y + h + g + CROP],
+  const out = CROP + 1, inn = CROP_IN;
+  return [
+    // top-left, top-right, bottom-left, bottom-right: one horizontal, one vertical each
+    [x - out, y, x + inn, y], [x, y - out, x, y + inn],
+    [x + w - inn, y, x + w + out, y], [x + w, y - out, x + w, y + inn],
+    [x - out, y + h, x + inn, y + h], [x, y + h - inn, x, y + h + out],
+    [x + w - inn, y + h, x + w + out, y + h], [x + w, y + h - inn, x + w, y + h + out],
   ];
-  return lines;
+}
+
+// Crop marks as [x1, y1, x2, y2, white] segments. On an inverted band each mark is
+// split where it meets the black (strip plus bleed): white inside, black outside.
+function cropSegments(plan, x, y, w, h) {
+  const lines = cropMarks(x, y, w, h);
+  if (!plan.invert) return lines.map((l) => [...l, false]);
+  const b = plan.bleed, rx0 = x - b, rx1 = x + w + b, ry0 = y - b, ry1 = y + h + b;
+  const out = [];
+  for (const [x1, y1, x2, y2] of lines) {
+    const horiz = y1 === y2;
+    const [a, c] = horiz ? [Math.min(x1, x2), Math.max(x1, x2)] : [Math.min(y1, y2), Math.max(y1, y2)];
+    const across = horiz ? y1 : x1;
+    const [lo, hi] = horiz ? [rx0, rx1] : [ry0, ry1];
+    const inBand = horiz ? across >= ry0 && across <= ry1 : across >= rx0 && across <= rx1;
+    const seg = (p, q, white) => {
+      if (q - p > 1e-9) out.push(horiz ? [p, across, q, across, white] : [across, p, across, q, white]);
+    };
+    if (!inBand) { seg(a, c, false); continue; }
+    seg(a, Math.min(c, lo), false);
+    seg(Math.max(a, lo), Math.min(c, hi), true);
+    seg(Math.max(a, hi), c, false);
+  }
+  return out;
 }
 
 // ---- Paper (SVG) -----------------------------------------------------------
@@ -200,8 +239,8 @@ function cropMarks(x, y, w, h) {
 export function paperLayout(plan, paperKey) {
   const paper = PAPER[paperKey];
   if (!paper) throw new Error(`Unknown paper size "${paperKey}".`);
-  const strips = splitStrips(plan, paper.w - 2 * PAPER_MARGIN);
-  const rowH = PAPER_CAPTION + plan.height + PAPER_ROW_GAP;
+  const strips = splitStrips(plan, paper.w - 2 * PAPER_MARGIN - 2 * plan.bleed);
+  const rowH = PAPER_CAPTION + plan.height + 2 * plan.bleed + PAPER_ROW_GAP;
   const rowsPerPage = Math.floor((paper.h - 2 * PAPER_MARGIN - PAPER_HEADER - PAPER_FOOTER + PAPER_ROW_GAP) / rowH);
   if (rowsPerPage < 1) throw new Error('The band is too tall to fit on the page.');
   const pages = [];
@@ -220,20 +259,28 @@ export function paperSvgs(plan, paperKey) {
     out.push(`<text x="${m}" y="${m + 4}" font-size="4.2" font-weight="bold" fill="#000">Badge Turntable encoder ring` +
       (pages.length > 1 ? ` (page ${pageIndex + 1} of ${pages.length})` : '') + `</text>`);
     out.push(`<text x="${m}" y="${m + 9}" font-size="2.8" fill="#333">${esc(summary(plan))}</text>`);
-    out.push(`<text x="${m}" y="${m + 13}" font-size="2.8" fill="#333">Print at 100% (Actual size). Cut on the corner marks. ` +
+    const cutHow = plan.invert ? 'Cut on the corner crosses (white where they cross the black).' : 'Cut on the corner marks.';
+    out.push(`<text x="${m}" y="${m + 13}" font-size="2.8" fill="#333">Print at 100% (Actual size). ${cutHow} ` +
       `Wrap strips in order with markers upright; strip 1's first marker is 0°.</text>`);
 
     rows.forEach((strip, i) => {
       const top = m + PAPER_HEADER + i * rowH;
-      const y = top + PAPER_CAPTION;
-      out.push(`<text x="${m + 3}" y="${r2(top + 3)}" font-size="2.8" fill="#333">${esc(stripCaption(plan, strip))}</text>`);
-      out.push(`<rect x="${m}" y="${r2(y)}" width="${r2(strip.length)}" height="${plan.height}" fill="none" stroke="#ccc" stroke-width="0.15" stroke-dasharray="1 1"/>`);
+      const b = plan.bleed, x = m + b, y = top + PAPER_CAPTION + b;
+      out.push(`<text x="${x + 3}" y="${r2(top + 3)}" font-size="2.8" fill="#333">${esc(stripCaption(plan, strip))}</text>`);
+      if (plan.invert) {
+        out.push(`<rect x="${r2(x - b)}" y="${r2(y - b)}" width="${r2(strip.length + 2 * b)}" height="${r2(plan.height + 2 * b)}" fill="#000"/>`);
+      } else {
+        out.push(`<rect x="${x}" y="${r2(y)}" width="${r2(strip.length)}" height="${plan.height}" fill="none" stroke="#ccc" stroke-width="0.15" stroke-dasharray="1 1"/>`);
+      }
       const path = stripRects(plan, strip.ids)
-        .map((q) => `M${r2(m + q.u)} ${r2(y + q.v)}h${r2(q.w)}v${r2(q.h)}h${r2(-q.w)}z`).join('');
-      out.push(`<path d="${path}" fill="#000"/>`);
-      const ticks = cropMarks(m, y, strip.length, plan.height)
-        .map(([x1, y1, x2, y2]) => `M${r2(x1)} ${r2(y1)}L${r2(x2)} ${r2(y2)}`).join('');
-      out.push(`<path d="${ticks}" stroke="#000" stroke-width="0.2"/>`);
+        .map((q) => `M${r2(x + q.u)} ${r2(y + q.v)}h${r2(q.w)}v${r2(q.h)}h${r2(-q.w)}z`).join('');
+      out.push(`<path d="${path}" fill="${plan.invert ? '#fff' : '#000'}"/>`);
+      const segs = cropSegments(plan, x, y, strip.length, plan.height);
+      for (const white of [false, true]) {
+        const d = segs.filter((sg) => sg[4] === white)
+          .map(([x1, y1, x2, y2]) => `M${r2(x1)} ${r2(y1)}L${r2(x2)} ${r2(y2)}`).join('');
+        if (d) out.push(`<path d="${d}" stroke="${white ? '#fff' : '#000'}" stroke-width="0.2"/>`);
+      }
     });
 
     // 100 mm scale bar to check the printer didn't scale the page.
@@ -253,8 +300,8 @@ export function paperSvgs(plan, paperKey) {
 // Strips run along the 6 in feed direction, side by side across the 4 in width.
 // Each strip is rotated so its "up" points to +x (the caption sits on its right).
 export function labelLayout(plan) {
-  const strips = splitStrips(plan, LABEL.h - 2 * LABEL_MARGIN);
-  const colW = plan.height + LABEL_CAPTION;
+  const strips = splitStrips(plan, LABEL.h - 2 * LABEL_MARGIN - 2 * plan.bleed);
+  const colW = plan.height + 2 * plan.bleed + LABEL_CAPTION;
   const cols = Math.floor((LABEL.w - 2 * LABEL_MARGIN) / colW);
   if (cols < 1) throw new Error('The band is too tall to fit across a 4 in label.');
   const labels = [];
@@ -262,9 +309,15 @@ export function labelLayout(plan) {
   return { strips, labels, colW };
 }
 
+// Where a strip's own rectangle starts on the label (mm), inside any bleed.
+function stripOrigin(plan, colX) {
+  return { x: colX + plan.bleed, y: LABEL_MARGIN + plan.bleed };
+}
+
 // Maps a strip-coordinate rectangle onto the label (mm).
 function labelRect(plan, colX, q) {
-  return { x: colX + plan.height - (q.v + q.h), y: LABEL_MARGIN + q.u, w: q.h, h: q.w };
+  const o = stripOrigin(plan, colX);
+  return { x: o.x + plan.height - (q.v + q.h), y: o.y + q.u, w: q.h, h: q.w };
 }
 
 export function labelZpl(plan, dpi) {
@@ -278,20 +331,29 @@ export function labelZpl(plan, dpi) {
     out.push(`^CI28^PW${dots(LABEL.w)}^LL${dots(LABEL.h)}^LH0,0`);
     cols.forEach((strip, j) => {
       const colX = LABEL_MARGIN + j * colW;
+      const o = stripOrigin(plan, colX), b = plan.bleed;
+      // Boxes are drawn in order, so white cells and marks can go over the black band.
+      const box = (xmm, ymm, wmm, hmm, white) => {
+        // Round edges, not sizes, so neighbouring cells tile without gaps.
+        const x0 = dots(xmm), y0 = dots(ymm);
+        const w = dots(xmm + wmm) - x0, h = dots(ymm + hmm) - y0;
+        out.push(`^FO${x0},${y0}^GB${w},${h},${Math.min(w, h)}${white ? ',W' : ''}^FS`);
+      };
+      if (plan.invert) box(o.x - b, o.y - b, plan.height + 2 * b, strip.length + 2 * b, false);
       for (const q of stripRects(plan, strip.ids)) {
         const r = labelRect(plan, colX, q);
-        // Round edges, not sizes, so neighbouring cells tile without gaps.
-        const x0 = dots(r.x), y0 = dots(r.y);
-        const w = dots(r.x + r.w) - x0, h = dots(r.y + r.h) - y0;
-        out.push(`^FO${x0},${y0}^GB${w},${h},${Math.min(w, h)}^FS`);
+        box(r.x, r.y, r.w, r.h, plan.invert);
       }
       const t = Math.max(2, dots(0.25));
-      for (const [x1, y1, x2, y2] of cropMarks(colX, LABEL_MARGIN, plan.height, strip.length)) {
-        const x = dots(Math.min(x1, x2)), y = dots(Math.min(y1, y2));
-        out.push(`^FO${x},${y}^GB${Math.max(t, dots(Math.abs(x2 - x1)))},${Math.max(t, dots(Math.abs(y2 - y1)))},${t}^FS`);
+      for (const [x1, y1, x2, y2, white] of cropSegments(plan, o.x, o.y, plan.height, strip.length)) {
+        // Centre the line's thickness on the cut line.
+        const horiz = y1 === y2;
+        const x = dots(Math.min(x1, x2)) - (horiz ? 0 : t >> 1);
+        const y = dots(Math.min(y1, y2)) - (horiz ? t >> 1 : 0);
+        out.push(`^FO${x},${y}^GB${Math.max(t, dots(Math.abs(x2 - x1)))},${Math.max(t, dots(Math.abs(y2 - y1)))},${t}${white ? ',W' : ''}^FS`);
       }
       const th = dots(2.2);
-      out.push(`^FO${dots(colX + plan.height + 0.6)},${dots(LABEL_MARGIN)}^A0R,${th},${th}^FD${stripCaption(plan, strip, true)}^FS`);
+      out.push(`^FO${dots(o.x + plan.height + b + 0.6)},${dots(LABEL_MARGIN)}^A0R,${th},${th}^FD${stripCaption(plan, strip, true)}^FS`);
     });
     out.push(`^XZ`);
   });
@@ -307,15 +369,22 @@ export function labelSvgs(plan) {
     out.push(`<rect x="0.2" y="0.2" width="${LABEL.w - 0.4}" height="${LABEL.h - 0.4}" rx="3" fill="#fff" stroke="#bbb" stroke-width="0.4"/>`);
     cols.forEach((strip, j) => {
       const colX = LABEL_MARGIN + j * colW;
+      const o = stripOrigin(plan, colX), b = plan.bleed;
+      if (plan.invert) {
+        out.push(`<rect x="${r2(o.x - b)}" y="${r2(o.y - b)}" width="${r2(plan.height + 2 * b)}" height="${r2(strip.length + 2 * b)}" fill="#000"/>`);
+      }
       const path = stripRects(plan, strip.ids).map((q) => {
         const r = labelRect(plan, colX, q);
         return `M${r2(r.x)} ${r2(r.y)}h${r2(r.w)}v${r2(r.h)}h${r2(-r.w)}z`;
       }).join('');
-      out.push(`<path d="${path}" fill="#000"/>`);
-      const ticks = cropMarks(colX, LABEL_MARGIN, plan.height, strip.length)
-        .map(([x1, y1, x2, y2]) => `M${r2(x1)} ${r2(y1)}L${r2(x2)} ${r2(y2)}`).join('');
-      out.push(`<path d="${ticks}" stroke="#000" stroke-width="0.25"/>`);
-      const tx = r2(colX + plan.height + 0.6);
+      out.push(`<path d="${path}" fill="${plan.invert ? '#fff' : '#000'}"/>`);
+      const segs = cropSegments(plan, o.x, o.y, plan.height, strip.length);
+      for (const white of [false, true]) {
+        const d = segs.filter((sg) => sg[4] === white)
+          .map(([x1, y1, x2, y2]) => `M${r2(x1)} ${r2(y1)}L${r2(x2)} ${r2(y2)}`).join('');
+        if (d) out.push(`<path d="${d}" stroke="${white ? '#fff' : '#000'}" stroke-width="0.25"/>`);
+      }
+      const tx = r2(o.x + plan.height + b + 0.6);
       out.push(`<text x="${tx}" y="${LABEL_MARGIN}" font-size="2.2" fill="#000" transform="rotate(90 ${tx} ${LABEL_MARGIN})">${esc(stripCaption(plan, strip))}</text>`);
     });
     out.push('</svg>');
