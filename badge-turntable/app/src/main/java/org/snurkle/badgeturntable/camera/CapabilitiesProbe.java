@@ -14,6 +14,9 @@ import android.util.Size;
 import org.snurkle.badgeturntable.ir.IrTransmitter;
 
 import java.util.Arrays;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 
 /**
  * Reports what this phone lets a third-party app do: camera hardware level,
@@ -31,14 +34,21 @@ public final class CapabilitiesProbe {
 
         CameraManager cm = context.getSystemService(CameraManager.class);
         try {
-            for (String id : cm.getCameraIdList()) {
+            List<String> ids = Arrays.asList(cm.getCameraIdList());
+            for (String id : ids) {
                 CameraCharacteristics c = cm.getCameraCharacteristics(id);
                 describe(sb, id, c);
-                for (String phys : c.getPhysicalCameraIds()) {
-                    sb.append("  physical ").append(phys).append(":\n");
-                    describe(sb, "    " + phys, cm.getCameraCharacteristics(phys));
+                Set<String> physical = c.getPhysicalCameraIds();
+                if (!physical.isEmpty()) {
+                    sb.append("  physical cameras: ").append(String.join(", ", physical)).append('\n');
                 }
                 sb.append('\n');
+                // Physical lenses usually appear in the main list too; describe only the hidden ones.
+                for (String phys : physical) {
+                    if (ids.contains(phys)) continue;
+                    describe(sb, phys + " (physical, in " + id + ")", cm.getCameraCharacteristics(phys));
+                    sb.append('\n');
+                }
             }
         } catch (CameraAccessException e) {
             sb.append("Camera access failed: ").append(e.getMessage());
@@ -63,11 +73,11 @@ public final class CapabilitiesProbe {
         sb.append("  focal lengths: ").append(Arrays.toString(focal)).append(" mm\n");
         Float minFocus = c.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE);
         sb.append("  min focus: ").append(minFocus == null ? "?" : minFocus == 0 ? "fixed focus"
-                : String.format("%.1f diopters (%.1f cm)", minFocus, 100f / minFocus)).append('\n');
+                : String.format(Locale.US, "%.1f diopters (%.1f cm)", minFocus, 100f / minFocus)).append('\n');
         Range<Integer> iso = c.get(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE);
         Range<Long> exp = c.get(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE);
         if (iso != null) sb.append("  ISO: ").append(iso).append('\n');
-        if (exp != null) sb.append(String.format("  shutter: %.6f to %.3f s%n", exp.getLower() / 1e9, exp.getUpper() / 1e9));
+        if (exp != null) sb.append(String.format(Locale.US, "  shutter: %.6f to %.3f s%n", exp.getLower() / 1e9, exp.getUpper() / 1e9));
 
         StreamConfigurationMap map = c.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
         if (map != null) {

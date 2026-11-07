@@ -10,6 +10,7 @@ import java.util.UUID;
  */
 public final class Session {
 
+    /** LOCAL_ONLY: not synced (or changed since). PENDING: queued with Sync. */
     public enum SyncState { LOCAL_ONLY, PENDING, SYNCED, FAILED }
 
     /** A file the app produced for this badge, in index.md order. */
@@ -52,12 +53,16 @@ public final class Session {
     // Options, remembered as defaults for the next session
     public boolean captureVideo = true;
     public boolean autoMode = true;
-    public boolean syncToSamba = true;
 
     public final List<Media> media = new ArrayList<>();
     /** Files the app produced earlier and the user deleted; removed from index.md on the next write. */
     public final List<String> removed = new ArrayList<>();
     public SyncState syncState = SyncState.LOCAL_ONLY;
+
+    /** Files or details changed: a synced badge needs syncing again. One already queued stays queued. */
+    public void markChanged() {
+        if (syncState == SyncState.SYNCED) syncState = SyncState.LOCAL_ONLY;
+    }
 
     public String effectiveSlug() {
         return slugEdited && !slug.isEmpty() ? slug : Slugs.make(group, title, year);

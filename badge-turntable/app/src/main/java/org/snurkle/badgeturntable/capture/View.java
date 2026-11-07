@@ -1,6 +1,11 @@
 package org.snurkle.badgeturntable.capture;
 
-/** The four turntable views. 0° is the badge front as framed when Capture is pressed. */
+import java.util.Locale;
+
+/**
+ * The four turntable views. 0° is the front: where Set front put it, or else the badge as
+ * framed when Capture is pressed.
+ */
 public enum View {
     FRONT(0, "front", "Front"),
     SIDE_090(90, "side-090", "Side (90°)"),
@@ -25,6 +30,6 @@ public enum View {
     /** "Front", or "With SAOs installed (front)" for an extra set. */
     public String caption(String setLabel) {
         if (setLabel == null || setLabel.isEmpty()) return caption;
-        return setLabel + " (" + caption.substring(0, 1).toLowerCase() + caption.substring(1) + ")";
+        return setLabel + " (" + caption.substring(0, 1).toLowerCase(Locale.ROOT) + caption.substring(1) + ")";
     }
 }

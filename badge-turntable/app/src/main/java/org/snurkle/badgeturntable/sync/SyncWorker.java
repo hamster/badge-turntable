@@ -21,10 +21,11 @@ import java.io.File;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Uploads sessions marked for sync to the Samba share, mirroring the local
- * layout (_badges/ and _capture/ under the configured base path). A file is
- * re-uploaded when its size or modified time changed since the last upload.
- * Also refreshes the known badge IDs from the share.
+ * Uploads the sessions queued with {@link #syncNow} to the Samba share, mirroring the local
+ * layout (_badges/ and _capture/ under the configured base path). Sync is manual: the
+ * Sessions screen has a Sync button per badge and Sync all. A file is re-uploaded when its
+ * size or modified time changed since the last upload. Also refreshes the known badge IDs
+ * from the share.
  */
 public final class SyncWorker extends Worker {
     private static final String TAG = "SyncWorker";
@@ -35,7 +36,37 @@ public final class SyncWorker extends Worker {
         super(context, params);
     }
 
-    public static void enqueue(Context context) {
+    /** The unique work name, for watching progress (the Sessions screen refreshes on it). */
+    public static final String WORK_NAME = WORK;
+
+    /**
+     * Queues these sessions (all that aren't synced, if null) and starts the upload when the
+     * network allows. Blocking (reads and writes session.json); call off the main thread.
+     */
+    public static void syncNow(Context context, Session only) throws java.io.IOException {
+        SessionStore store = new SessionStore(context);
+        for (Session s : store.list()) {
+            boolean wanted = only == null ? s.syncState != Session.SyncState.SYNCED : s.id.equals(only.id);
+            if (!wanted) continue;
+            s.syncState = Session.SyncState.PENDING;
+            store.save(s);
+        }
+        enqueue(context);
+    }
+
+    /** Forgets the upload stamps of a deleted session, so a new one with its slug uploads in full. */
+    public static void forget(Context context, SessionStore store, Session s) {
+        String badges = store.base().toURI().relativize(store.badgeDir(s).toURI()).getPath();
+        String capture = store.base().toURI().relativize(store.captureDir(s).toURI()).getPath();
+        SharedPreferences state = context.getSharedPreferences(STATE_PREFS, Context.MODE_PRIVATE);
+        SharedPreferences.Editor e = state.edit();
+        for (String key : state.getAll().keySet()) {
+            if (key.startsWith(badges) || key.startsWith(capture)) e.remove(key);
+        }
+        e.apply();
+    }
+
+    private static void enqueue(Context context) {
         OneTimeWorkRequest req = new OneTimeWorkRequest.Builder(SyncWorker.class)
                 .setConstraints(new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
@@ -57,7 +88,8 @@ public final class SyncWorker extends Worker {
         try (SmbClient smb = new SmbClient(settings)) {
             smb.open();
             for (Session s : store.list()) {
-                if (!s.syncToSamba || s.syncState == Session.SyncState.SYNCED) continue;
+                // Queued ones, and ones that failed (retried with the work, or on the next Sync).
+                if (s.syncState != Session.SyncState.PENDING && s.syncState != Session.SyncState.FAILED) continue;
                 try {
                     uploadTree(smb, settings, store.base(), store.badgeDir(s), state);
                     uploadTree(smb, settings, store.base(), store.captureDir(s), state);

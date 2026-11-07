@@ -1,5 +1,7 @@
 package org.snurkle.badgeturntable.motion;
 
+import android.util.Log;
+
 import org.snurkle.badgeturntable.ir.IrCode;
 import org.snurkle.badgeturntable.ir.IrTransmitter;
 import org.snurkle.badgeturntable.ir.TurntableProfile;
@@ -14,10 +16,23 @@ import java.util.function.Supplier;
  * the capture thread, never the main thread.
  */
 public final class TurntableController {
+    private static final String TAG = "Turntable";
     private static final long POLL_MS = 30;
     private static final double MOVED_DEG = 2.0;
     private static final double HOME_TOL_DEG = 2.0;  // matches the spec's positioning tolerance
     private static final long PRESS_GAP_MS = 150;
+    /**
+     * How long a stopped table may take to come to rest before stop() presses again. The
+     * JAYEGT coasts about 0.35 s at its fastest speed (14.6 deg at 42.5 deg/s), and the
+     * ring adds ~0.1 s of latency; much longer and a second press would restart it.
+     */
+    private static final long STOP_CONFIRM_MS = 1200;
+    private static final long STILL_WINDOW_MS = 200;
+    private static final long SPEED_MEASURE_MS = 1200;
+    /** Time for the motor to reach a new speed before measuring it. */
+    private static final long SPEED_SETTLE_MS = 800;
+    private static final int MAX_SPEED_PRESSES = 4;
+    private static final double STILL_DEG = 0.8;
 
     private final IrTransmitter ir;
     private final TurntableProfile profile;
@@ -33,6 +48,10 @@ public final class TurntableController {
 
     public void setCalibration(Calibration cal) {
         this.cal = cal;
+    }
+
+    public Calibration calibration() {
+        return cal;
     }
 
     public TurntableProfile profile() {
@@ -55,9 +74,91 @@ public final class TurntableController {
         press(profile.has(Role.TURN_RIGHT) ? Role.TURN_RIGHT : Role.START_STOP);
     }
 
-    /** Stops a moving table. START_STOP toggles, so only call this while it's moving. */
+    /**
+     * Stops a moving table and checks with the ring that it did. IR is one-way and the
+     * JAYEGT's receiver faces away from the phone, so a press is sometimes missed (on the
+     * test bench, one On/Pause in about six). START_STOP toggles, so it's only pressed again
+     * once the table has clearly kept going for longer than any real coast.
+     */
     public void stop() throws MoveFailedException, InterruptedException {
-        press(Role.START_STOP);
+        for (int attempt = 1; attempt <= 2; attempt++) {
+            press(Role.START_STOP);
+            if (awaitStill(STOP_CONFIRM_MS)) return;
+            Log.w(TAG, "still turning after stop press " + attempt);
+        }
+        throw new MoveFailedException(MoveFailedException.Reason.NO_MOVEMENT, "the turntable didn't stop");
+    }
+
+    /**
+     * Signed rotation rate in deg/s, measured on the ring over windowMs; NaN if the ring
+     * gave fewer than two readings.
+     */
+    public double measureRate(long windowMs) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + windowMs;
+        double travel = 0, last = Double.NaN;
+        long firstTs = 0, lastTs = 0;
+        while (System.currentTimeMillis() < deadline) {
+            RingReading r = ring.get();
+            if (r.ok() && r.timestampNs != lastTs) {
+                if (Double.isNaN(last)) firstTs = r.timestampNs;
+                else travel += RingReading.delta(last, r.angleDeg);
+                last = r.angleDeg;
+                lastTs = r.timestampNs;
+            }
+            Thread.sleep(POLL_MS);
+        }
+        double dt = (lastTs - firstTs) / 1e9;
+        return dt > 0.2 ? travel / dt : Double.NaN;
+    }
+
+    /**
+     * Changes the speed of a turning table to about targetSecondsPerRev (within 20%), with
+     * the +Speed / -Speed buttons, checking each press on the ring. The JAYEGT has three
+     * speeds (8, 15 and 30 s/rev). Presses can be missed, and whether the buttons stop or
+     * wrap at the ends isn't known, so it just keeps pressing towards the target, a few
+     * times at most. Returns the seconds per revolution it ended up at.
+     */
+    public double setSpeed(double targetSecondsPerRev) throws MoveFailedException, InterruptedException {
+        double spr = Double.NaN;
+        for (int press = 0; ; press++) {
+            double r = measureRate(SPEED_MEASURE_MS);
+            if (Double.isNaN(r) || Math.abs(r) < 1) {
+                throw new MoveFailedException(MoveFailedException.Reason.NO_MOVEMENT, "not turning while setting the speed");
+            }
+            spr = 360 / Math.abs(r);
+            if (Math.abs(spr - targetSecondsPerRev) <= 0.2 * targetSecondsPerRev) break;
+            Role button = spr < targetSecondsPerRev ? Role.SPEED_DOWN : Role.SPEED_UP;
+            if (press >= MAX_SPEED_PRESSES || !profile.has(button)) break;
+            Log.i(TAG, String.format("setSpeed: %.1f s/rev, want %.0f: pressing %s", spr, targetSecondsPerRev, button));
+            press(button);
+            Thread.sleep(SPEED_SETTLE_MS);
+        }
+        Log.i(TAG, String.format("setSpeed: at %.1f s/rev (wanted %.0f)", spr, targetSecondsPerRev));
+        return spr;
+    }
+
+    /**
+     * True once two readings STILL_WINDOW_MS apart differ by less than STILL_DEG, within
+     * timeoutMs. Readings the ring couldn't make are skipped.
+     */
+    private boolean awaitStill(long timeoutMs) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        double anchor = Double.NaN;
+        long anchorAt = 0;
+        while (System.currentTimeMillis() < deadline) {
+            RingReading r = ring.get();
+            long now = System.currentTimeMillis();
+            if (r.ok()) {
+                if (Double.isNaN(anchor) || Math.abs(RingReading.delta(anchor, r.angleDeg)) > STILL_DEG) {
+                    anchor = r.angleDeg;
+                    anchorAt = now;
+                } else if (now - anchorAt >= STILL_WINDOW_MS) {
+                    return true;
+                }
+            }
+            Thread.sleep(POLL_MS);
+        }
+        return false;
     }
 
     /**
@@ -104,6 +205,8 @@ public final class TurntableController {
                 if (step == null) stopAfter(start, degrees - cal.stopOvershootDeg);
                 double end = waitForStable(timeForMs(degrees) + 5000, 0.5, 300);
                 if (Double.isNaN(end)) throw new MoveFailedException(MoveFailedException.Reason.RING_LOST, "ring lost during move");
+                Log.i(TAG, String.format("moveBy %.2f from %.2f (%s): ended at %.2f, travelled %.2f",
+                        degrees, start, step != null ? step : "continuous", end, cal.forward(start, end)));
                 return end;
             }
             // Nothing happened: the press was probably missed. Try once more.
@@ -163,7 +266,10 @@ public final class TurntableController {
                 if (step > -5) travelled += Math.max(step, 0);  // ignore jitter backwards
                 last = r.angleDeg;
                 if (travelled >= stopAt) {
+                    long ageMs = (android.os.SystemClock.elapsedRealtimeNanos() - r.timestampNs) / 1_000_000;
                     stop();
+                    Log.i(TAG, String.format("stopAfter: target %.2f, stop sent at travel %.2f (reading %d ms old)",
+                            stopAt, travelled, ageMs));
                     return;
                 }
             }

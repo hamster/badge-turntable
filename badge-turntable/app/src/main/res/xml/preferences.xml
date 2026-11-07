@@ -1,6 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <PreferenceScreen xmlns:app="http://schemas.android.com/apk/res-auto">
 
+    <PreferenceCategory app:title="@string/cat_remote">
+        <SwitchPreferenceCompat
+            app:key="remote_enabled"
+            app:title="@string/remote_enabled"
+            app:summary="@string/remote_enabled_summary"
+            app:defaultValue="false" />
+        <EditTextPreference app:key="remote_name" app:title="@string/remote_name" app:defaultValue="badge-turntable" app:useSimpleSummaryProvider="true" />
+        <EditTextPreference app:key="remote_port" app:title="@string/remote_port" app:defaultValue="8737" app:useSimpleSummaryProvider="true" />
+    </PreferenceCategory>
+
+    <!-- One row per paired PC, filled in by SettingsActivity. -->
+    <PreferenceCategory app:key="remote_paired" app:title="@string/cat_remote_paired" />
+
     <PreferenceCategory app:title="@string/cat_samba">
         <EditTextPreference app:key="smb_host" app:title="@string/smb_host" app:useSimpleSummaryProvider="true" />
         <EditTextPreference app:key="smb_port" app:title="@string/smb_port" app:defaultValue="445" app:useSimpleSummaryProvider="true" />
@@ -20,11 +33,35 @@
             app:entryValues="@array/turntable_ids"
             app:defaultValue="jayegt-5.74"
             app:useSimpleSummaryProvider="true" />
-        <EditTextPreference app:key="ring_markers" app:title="@string/ring_markers" app:defaultValue="36" app:useSimpleSummaryProvider="true" />
+        <EditTextPreference app:key="ring_markers" app:title="@string/ring_markers" app:defaultValue="45" app:useSimpleSummaryProvider="true" />
         <Preference app:key="calibration" app:title="@string/calibration" />
     </PreferenceCategory>
 
+    <!-- One row per role in the selected profile, filled in by SettingsActivity. -->
+    <PreferenceCategory app:key="ir_test" app:title="@string/cat_ir_test" />
+
     <PreferenceCategory app:title="@string/cat_capture">
+        <ListPreference
+            app:key="capture_method"
+            app:title="@string/capture_method"
+            app:entries="@array/capture_method_names"
+            app:entryValues="@array/capture_method_values"
+            app:defaultValue="spin"
+            app:useSimpleSummaryProvider="true" />
+        <ListPreference
+            app:key="spin_photo_spr"
+            app:title="@string/spin_photo_speed"
+            app:entries="@array/spin_speed_names"
+            app:entryValues="@array/spin_speed_values"
+            app:defaultValue="30"
+            app:useSimpleSummaryProvider="true" />
+        <ListPreference
+            app:key="spin_video_spr"
+            app:title="@string/spin_video_speed"
+            app:entries="@array/spin_speed_names"
+            app:entryValues="@array/spin_speed_values"
+            app:defaultValue="15"
+            app:useSimpleSummaryProvider="true" />
         <ListPreference
             app:key="manual_delay_ms"
             app:title="@string/manual_delay"

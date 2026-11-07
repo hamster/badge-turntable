@@ -5,6 +5,9 @@
     <uses-permission android:name="android.permission.TRANSMIT_IR" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Remote control: the badge-turntable.local name (mDNS) -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
 
     <uses-feature android:name="android.hardware.camera.any" android:required="true" />
     <!-- Manual mode works without an IR blaster -->
@@ -19,9 +22,11 @@
         android:label="@string/app_name"
         android:theme="@style/Theme.BadgeTurntable">
 
+        <!-- Landscape only (either way round, for however the phone sits in the tripod). -->
         <activity
             android:name=".ui.MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:screenOrientation="sensorLandscape">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -30,14 +35,20 @@
 
         <activity
             android:name=".ui.SessionEditActivity"
+            android:screenOrientation="sensorLandscape"
             android:windowSoftInputMode="adjustResize" />
 
         <activity
             android:name=".ui.CaptureActivity"
             android:configChanges="orientation|screenSize|screenLayout"
+            android:screenOrientation="sensorLandscape"
             android:theme="@style/Theme.BadgeTurntable.Capture" />
 
-        <activity android:name=".ui.SettingsActivity" />
-        <activity android:name=".ui.ProbeActivity" />
+        <activity
+            android:name=".ui.SettingsActivity"
+            android:screenOrientation="sensorLandscape" />
+        <activity
+            android:name=".ui.ProbeActivity"
+            android:screenOrientation="sensorLandscape" />
     </application>
 </manifest>

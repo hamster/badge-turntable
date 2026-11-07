@@ -63,7 +63,7 @@ public final class KnownBadgeIds {
         c.setConnectTimeout(5000);
         c.setReadTimeout(5000);
         try (InputStream in = c.getInputStream()) {
-            JSONArray arr = new JSONArray(new String(in.readAllBytes(), StandardCharsets.UTF_8));
+            JSONArray arr = new JSONArray(new String(org.snurkle.badgeturntable.Streams.readAll(in), StandardCharsets.UTF_8));
             Map<String, String> ids = new HashMap<>();
             for (int i = 0; i < arr.length(); i++) {
                 String id = BadgeIds.normalize(arr.getJSONObject(i).optString("badge_id"));

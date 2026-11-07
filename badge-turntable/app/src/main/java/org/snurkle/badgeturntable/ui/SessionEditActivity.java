@@ -15,7 +15,12 @@ import com.google.android.material.textfield.MaterialAutoCompleteTextView;
 import com.google.android.material.textfield.TextInputEditText;
 import com.google.android.material.textfield.TextInputLayout;
 
+import androidx.preference.PreferenceManager;
+
 import org.snurkle.badgeturntable.R;
+import org.snurkle.badgeturntable.ir.IrTransmitter;
+import org.snurkle.badgeturntable.ir.Presets;
+import org.snurkle.badgeturntable.ir.TurntableProfile;
 import org.snurkle.badgeturntable.session.BadgeIds;
 import org.snurkle.badgeturntable.session.Session;
 import org.snurkle.badgeturntable.session.SessionStore;
@@ -41,7 +46,11 @@ public final class SessionEditActivity extends AppCompatActivity {
     private TextInputEditText title, year, group, event, slug, badgeId;
     private TextInputLayout badgeIdLayout;
     private MaterialAutoCompleteTextView con;
-    private CheckBox video, auto, sync;
+    private CheckBox video, auto;
+    private android.widget.Button saveButton, captureButton;
+    private android.widget.TextView saveHint;
+    /** Null if this phone can drive the turntable; otherwise why not. */
+    private Integer autoUnavailable;
     private boolean updatingSlug;
 
     @Override
@@ -63,10 +72,24 @@ public final class SessionEditActivity extends AppCompatActivity {
         con = findViewById(R.id.con);
         video = findViewById(R.id.opt_video);
         auto = findViewById(R.id.opt_auto);
-        sync = findViewById(R.id.opt_sync);
+        saveButton = findViewById(R.id.save);
+        captureButton = findViewById(R.id.capture);
+        saveHint = findViewById(R.id.save_hint);
 
-        findViewById(R.id.save).setOnClickListener(v -> save(false));
-        findViewById(R.id.capture).setOnClickListener(v -> save(true));
+        saveButton.setOnClickListener(v -> save(false));
+        captureButton.setOnClickListener(v -> save(true));
+        saveButton.setEnabled(false);
+        captureButton.setEnabled(false);
+
+        // Automatic turntable needs an IR blaster and a profile with a remote.
+        TurntableProfile profile = Presets.byId(this, PreferenceManager.getDefaultSharedPreferences(this)
+                .getString("turntable_model", Presets.JAYEGT_574));
+        if (!new IrTransmitter(this).available()) autoUnavailable = R.string.opt_auto_no_ir;
+        else if (!profile.supportsAuto()) autoUnavailable = R.string.opt_auto_no_remote;
+        if (autoUnavailable != null) {
+            auto.setEnabled(false);
+            auto.setText(autoUnavailable);
+        }
 
         String id = getIntent().getStringExtra(EXTRA_ID);
         io.execute(() -> {
@@ -98,8 +121,7 @@ public final class SessionEditActivity extends AppCompatActivity {
         event.setText(s.event);
         slug.setText(s.effectiveSlug());
         video.setChecked(s.captureVideo);
-        auto.setChecked(s.autoMode);
-        sync.setChecked(s.syncToSamba);
+        auto.setChecked(s.autoMode && autoUnavailable == null);
         if (isNew) {
             String suggestion = BadgeIds.suggestNext(ids.keySet());
             badgeId.setText(suggestion == null ? "" : suggestion);
@@ -114,6 +136,7 @@ public final class SessionEditActivity extends AppCompatActivity {
             updatingSlug = false;
         });
         title.addTextChangedListener(regen);
+        title.addTextChangedListener(new SimpleWatcher(this::checkSavable));
         group.addTextChangedListener(regen);
         year.addTextChangedListener(regen);
         slug.addTextChangedListener(new SimpleWatcher(() -> {
@@ -123,8 +146,20 @@ public final class SessionEditActivity extends AppCompatActivity {
         checkBadgeId();
     }
 
+    /** Save needs a title and a badge ID that's valid or blank; the hint says which is missing. */
+    private void checkSavable() {
+        if (session == null) return;
+        Integer why = null;
+        if (text(title).isEmpty()) why = R.string.title_required;
+        else if (!text(badgeId).isEmpty() && BadgeIds.normalize(text(badgeId)) == null) why = R.string.badge_id_fix;
+        saveButton.setEnabled(why == null);
+        captureButton.setEnabled(why == null);
+        saveHint.setText(why == null ? "" : getString(why));
+    }
+
     private void checkBadgeId() {
         if (session == null) return;
+        checkSavable();
         String raw = text(badgeId);
         if (raw.isEmpty()) {
             badgeIdLayout.setError(null);
@@ -146,11 +181,7 @@ public final class SessionEditActivity extends AppCompatActivity {
     }
 
     private void save(boolean thenCapture) {
-        if (session == null) return;
-        if (text(title).isEmpty()) {
-            title.setError(getString(R.string.title_required));
-            return;
-        }
+        if (session == null || !saveButton.isEnabled()) return;
         session.title = text(title);
         session.con = text(con).isEmpty() ? "defcon" : text(con);
         session.year = parseYear();
@@ -160,8 +191,8 @@ public final class SessionEditActivity extends AppCompatActivity {
         String id = BadgeIds.normalize(text(badgeId));
         session.badgeId = id == null ? "" : id;
         session.captureVideo = video.isChecked();
-        session.autoMode = auto.isChecked();
-        session.syncToSamba = sync.isChecked();
+        if (autoUnavailable == null) session.autoMode = auto.isChecked();
+        session.markChanged();
 
         Session s = session;
         io.execute(() -> {

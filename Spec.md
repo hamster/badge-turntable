@@ -1,6 +1,6 @@
 # Badge Turntable — Spec
 
-Draft 3 · Nov 3, 2026. Background research (IR APIs, viewer libraries, hosting limits) is in [Overview.md](Overview.md). The encoder ring has its own page, [encoder-ring/README.md](encoder-ring/README.md). Where documents disagree, this spec wins.
+Draft 5 · Nov 5, 2026. Background research (IR APIs, viewer libraries, hosting limits) is in [Overview.md](Overview.md). The encoder ring has its own page, [encoder-ring/README.md](encoder-ring/README.md). Where documents disagree, this spec wins.
 
 ## App identity
 
@@ -32,8 +32,8 @@ Typing on a phone clamped in a tripod is awkward, so the app can also be driven 
 | IR learning (optional) | usb-serial-for-android | Reads raw timings from a USB IR receiver (see [Turntable profiles](#turntable-profiles)). |
 | Background sync | WorkManager | Retries, network constraints. |
 | Secrets | Android Keystore | Encrypts the Samba password at rest. `androidx.security-crypto` is deprecated, so don't use it. |
-| Remote control server | NanoHTTPD + `nanohttpd-websocket` | Small pure-Java HTTP and WebSocket server, about 100 KB. Unmaintained since 2.3.1 (2016) but stable, and this is a LAN-only tool. If it causes trouble, AndroidAsync is the fallback. |
-| Local name | JmDNS | Pure-Java mDNS responder. Answers for `badge-turntable.local` and advertises an `_badge-turntable._tcp` service. Needs a Wi-Fi `MulticastLock` while running. |
+| Remote control server | Built in (`remote.HttpServer`, `remote.WebSocket`), `java.net` only | About 600 lines: HTTP/1.1 with keep-alive and the WebSocket upgrade, unit tested on the JVM. NanoHTTPD was the plan, but its WebSocket close codes are a fixed enum, so it can't send the API's 4401/4408/4409, and it has been unmaintained since 2016. |
+| Local name | Built in (`remote.MdnsResponder`) | A minimal mDNS responder: answers A queries for `badge-turntable.local` and advertises an `_badge-turntable._tcp` service with SRV and TXT records. It doesn't probe for name conflicts. Needs a Wi-Fi `MulticastLock` while running. Chosen over JmDNS to avoid a dependency that also pulls in SLF4J. |
 
 ### Target phone: OnePlus 13
 
@@ -63,23 +63,26 @@ Typing on a phone clamped in a tripod is awkward, so the app can also be driven 
 
 ## Screens
 
-1. **Sessions (home).** A list of capture sessions, each with a thumbnail, title, con/year, `badge_id`, capture count and sync status (local only / pending / synced / failed). Actions: **New session**, open a session to **edit/append**, **Sync now**, delete.
+1. **Sessions (home).** A list of capture sessions, each with a thumbnail, title, con/year, `badge_id`, capture count and, with Samba set up, its sync status (not synced / queued / synced / failed) and a **Sync** button. Actions: **New session**, open a session to **edit/append**, long-press for **Sync** and **Delete**, and **Sync all to Samba** in the menu.
 2. **New/edit session.** Badge identity fields, session options, and the list of captured files, which can be re-captioned, reordered or deleted. See [Sessions](#sessions).
-3. **Capture.** A full-screen live preview with camera controls, the turntable status, the **Capture** and **Extra shot** buttons, and the auto/manual toggle. Everything happens here, including calibration.
+3. **Capture** (called **Camera** when opened on its own). A full-screen live preview with camera controls, the turntable status, the **Capture** and **Extra shot** buttons, and the auto/manual toggle. Everything happens here, including calibration. It opens from a session, or from the **Camera** button on the Sessions screen without one (*setup mode*), to frame the light box and calibrate without making a badge first. In setup mode, captures go to the shots held for the editor, so **Capture** and **Extra shot** only appear while remote control is on. While a job runs, **Extra shot** becomes **Stop**, and in manual mode **Capture** becomes **Ready**.
 4. **Settings.** Remote control, Samba, turntable/IR, capture defaults, calibration status and the capabilities probe.
 
-When remote control is on, the Capture screen also shows the phone's name, address and pairing code, plus which PC is connected. With the editor doing the typing, screens 1 and 2 are only needed when using the phone on its own.
+Every screen is landscape only, either way round (`sensorLandscape`), to suit the phone lying sideways in the tripod. Turning it end over end doesn't restart the Capture screen, so the app updates the camera's target rotation itself, keeping stills, video and the ring frames upright.
+
+When remote control is on, the Capture screen also shows the phone's name, address and pairing code, plus which PC is connected, and the app opens straight on the Camera screen (Back goes to Sessions). With the editor doing the typing, screens 1 and 2 are only needed when using the phone on its own.
 
 ## Camera preview and controls
 
-The preview shows the light box. Controls are kept in a compact bar that can be hidden, so the user can judge framing:
+The preview shows the light box: the whole 4:3 frame, as the stills are, in the middle of the landscape screen. The remote-control address and pairing code sit centred across the top (clear of Android's camera-in-use indicator), the ring reading is two fixed lines at the top of the left column with **Set front** below it, a line across the bottom shows what's happening, and the buttons sit in the columns either side, so nothing covers the picture or the ring.
 
-- **Lens:** any back camera the device exposes (main, telephoto, macro), where CameraX or Camera2 lets it be selected.
-- **Zoom:** a slider or pinch.
-- **Focus:** tap to spot-focus and meter (`FocusMeteringAction`), a focus lock, and a manual focus-distance slider when the device reports `MANUAL_SENSOR`.
-- **Exposure:** auto with EV compensation, or manual ISO and shutter speed when supported. Exposure lock.
-- **White balance:** auto, presets (daylight, cloudy, incandescent, fluorescent) and lock. Manual Kelvin when the device supports `MANUAL_POST_PROCESSING`.
-- **Overlays:** a rule-of-thirds grid, a centre crosshair, the detected turntable axis line, and boxes around the detected ring markers (so you can see the ring is being read).
+- **Lens:** a **Lens** button cycles through the back cameras CameraX can bind. It's hidden when there's only one (the OnePlus 9 Pro offers only its logical camera, which picks a lens as it zooms; the OnePlus 13 lists each lens).
+- **Zoom:** pinch, or **−** and **+** (×1.25 a press). The readout between them shows the zoom; tap it to go back to 1×.
+- **Focus:** tap to focus at a point for a few seconds, then continuous AF returns (focus only: metering exposure too made the picture jump, and holding focus on a tap at the background left the ring blurred). Captures lock focus on the centre themselves. The editor adds a focus lock and manual focus distance when the device reports `MANUAL_SENSOR`, and its click on the preview holds focus on that point until it's cleared.
+- **Exposure:** auto with EV compensation (**EV −** and **EV +**), or manual ISO and shutter speed from the editor when supported. Exposure lock.
+- **White balance:** auto and presets (daylight, cloudy, incandescent, fluorescent), and a lock from the editor. Manual Kelvin isn't done yet.
+- **Guides** (a switch, remembered): a rule-of-thirds grid, a dashed centre line, and the **ring zone**, a box low in the frame where the ring should sit. It turns green when 8 or more markers are read, all inside the box, and amber with fewer or with markers outside it. The state only changes once it has held for 0.6 s, because the count varies from frame to frame.
+- **Always shown:** a small box on each marker being read, and the turntable axis the ring fit found. The axis turns green ("Axis centred") within 2% of the centre line, which means the camera is centred on the table.
 
 The light box doesn't change between badges, so all camera settings are saved as a **light box profile** and restored on launch. During a capture sequence, AF, AE and AWB are locked from the moment **Capture** is pressed, so all four stills and the video match.
 
@@ -132,7 +135,8 @@ Every role has a **Test** button. A profile can be exported as a Flipper `.ir` f
 The table's angle is read from a printed **encoder ring**: a band of ArUco markers (OpenCV `DICT_4X4_50`) wrapped around the turntable rim, facing the camera. [encoder-ring/README.md](encoder-ring/README.md) explains the maths and covers making, printing and fitting the ring. The generator (a browser page and a Node script) prints it on US Letter or A4 paper, or as ZPL for 4×6 in labels.
 
 - Marker *k* is centred at *k* × step degrees. A 200 mm rim with a 16 mm band gets 36 markers at 10°.
-- For each analysis frame (CameraX `ImageAnalysis`, about 720p), the app detects the visible markers. It then fits their horizontal positions to `x = x_axis + A·sin α + B·cos α`, a linear least-squares fit. That gives the table angle θ = atan2(−B, A) along with the axis position and rim radius in the image. With five or more markers, a perspective term then refines the fit (next point).
+- For each analysis frame (CameraX `ImageAnalysis`, 1600×1200 on the test phones), the app detects the visible markers. Detections that can't be on the band are dropped first (`MarkerFilter`): one more than 1.5 marker heights off a curve through the others (something else in the scene decoded as a marker), one out of angle order across the image (a misread ID), or one whose angle jump is far bigger than its pixel gap allows. Gaps alone don't count against a marker: in poor light only some decode. On the bench at night this dropped 3 bad detections in 191 frames and kept the reading within 0.65°. Ignored detections show as red crosses on the preview. It then fits their horizontal positions to `x = x_axis + A·sin α + B·cos α`, a linear least-squares fit. That gives the table angle θ = atan2(−B, A) along with the axis position and rim radius in the image. With five or more markers, a perspective term then refines the fit (next point).
+- **Exposure matters.** The band is mostly white tag borders with thin black gaps. If the picture is too bright (dim bench light pushing auto exposure to ISO 600–700), the white blooms over the gaps and no tags are read. About EV −2 (or manual exposure) reads well; the light box's own light is the real fix. CLAHE before detection, more threshold window sizes, a lower threshold constant and metering on the ring area were all tried and dropped: none clearly helped, for up to 150 ms a frame against 30–50.
 - Because each frame calibrates itself, zooming or nudging the phone doesn't break the angle reading. It needs three or more visible markers. At light-box distances the camera is only a few rim radii away, so the fit includes perspective (see [encoder-ring/README.md](encoder-ring/README.md#from-markers-to-an-angle)). On simulated camera images that gives about 0.1° (worst 0.5°). Print scale and how evenly the band is wrapped will add to that in practice.
 - The ring makes moves **closed-loop**: the app sends IR, watches the angle, and knows whether the table moved and where it stopped.
 
@@ -149,7 +153,7 @@ Calibration learns how the table moves and where zero is. Steps:
    - If the angle doesn't change within 3 s, it resends once, then fails with "The turntable didn't move. Check that IR reaches the table and that the turntable profile is correct."
 3. The table turns at least one full revolution, or until the zero marker has been seen crossing the axis twice. Meanwhile the app measures the **rotation speed** (°/s), the **direction** (including whether the strips were applied upside down), and how repeatable a full turn is.
 4. The app sends `stop` and measures **stop latency and overshoot** (the angle when stop was sent versus the angle once the table settles). This is repeated 2–3 times and averaged. If the profile has step buttons, each step size is measured too.
-5. The app homes the table to **zero** (by default, ring marker 0 facing the camera) and stores the **zero offset**. The user can instead choose **Use current position as zero**. If the profile has `set origin`, the app presses it at zero, so the table's own `return to origin` lands in the same place. Calibration also checks how repeatable that return is.
+5. The app homes the table to **zero** (the front, if one was set with **Set front**; otherwise ring marker 0 facing the camera) and stores the **zero offset**. **Set front** after calibrating moves the zero there too. If the profile has `set origin`, the app presses it at zero, so the table's own `return to origin` lands in the same place. Calibration also checks how repeatable that return is.
 6. A summary is shown, such as "Calibrated: 12.4°/s, stop overshoot 3.1°, positioning ±0.8°", and saved along with a timestamp and a hash of the turntable profile.
 
 **Out of calibration.** Before a session starts and before each capture, the app checks that:
@@ -177,7 +181,8 @@ A session is one physical badge. It holds:
   - `title`, `con` (picked from the template's list), `year` and `group`, plus an optional `event`.
   - `slug`: generated as `{group}-{title}-{year}` in lowercase kebab-case, following existing slugs like `dczia-mk9-2026`. It can be edited.
   - `badge_id`: see [Badge ID](#badge-id).
-- **Options:** `captureVideo`, `autoMode` and `syncToSamba`. New sessions start with the options used last time.
+- **Options:** `captureVideo` and `autoMode`. New sessions start with the options used last time. **Automatic turntable** is greyed out, with the reason, when the phone has no IR blaster or the turntable profile has no remote.
+- **Save** stays greyed out until there's a title and the badge ID is valid or blank, with the reason beside it.
 - **Captures:** a history of each capture run, with the stills taken (nominal and actual angle, timestamp), the video, extra shots, the camera settings and the calibration in use.
 
 **New session:** fill in the identity fields, then go to the Capture screen.
@@ -202,16 +207,40 @@ IDs that exist only in unpushed local changes on a PC can still collide. The web
 
 ## Capture sequence
 
-### Auto mode
+### Spin capture (default)
+
+**Settings → Capture → Capture method** picks *Spin* (the default) or *Stop at each view* (the auto and manual modes below).
+
+- **Photo spin:** the table turns continuously, slowly (**Spin speed for photos**, default 30 s per turn). The front is the one set with **Set front**, or else wherever the badge faces when **Capture** is pressed, and the other views follow in the direction the table turns. Each still is triggered as the ring comes up to its angle, allowing for the measured shutter lag (about 165–195 ms on the test phones). Its actual angle is interpolated from the ring readings at the exposure's sensor timestamp, which is on the same clock. Stills use `CAPTURE_MODE_MINIMIZE_LATENCY`, because maximum quality can merge frames and ghost a moving badge.
+- **Exposure:** the shutter is limited by a blur budget of 0.05 mm at 60 mm from the axis, which is 1/250 s at 30 s per turn. If auto exposure is already that fast, or the light box profile sets exposure by hand, it's left alone. Otherwise the shutter is shortened and ISO raised to match, at most ISO 1600.
+- **Video spin:** the table speeds up (**Spin speed for the video**, default 15 s per turn), and the clip records 360° plus the overlap while it keeps turning. The table stops before encoding starts.
+- **Speed control:** with IR, the app presses +Speed or −Speed and checks each press on the ring, up to four presses, until it's within 20% of the target. Whether the JAYEGT's speed buttons stop or wrap at the ends hasn't been measured yet.
+- **Without IR** (a phone with no blaster): the status line asks the user to start the table, and the app waits up to 2 minutes for steady rotation, then says when to stop it. It can't change speed, so set the table to its slowest speed.
+- **Failures:** if the table stops or reverses mid-spin, the move-failed prompt offers **Retry** or **Stop**. A reversal usually means intermittent or swing mode: press Resume Continuous Rotation.
+- **Tested:** on the OnePlus 9 Pro at 8 s per turn, the stills landed within 2.1° of their angles, sharp enough to use.
+
+Recorded angles (`nominalDeg`/`actualDeg` in the API, `angleNominal`/`angleActual` in `session.json`) are measured from the front, so the front is about 0 and the 90° view about 90, in either capture method.
+
+### Seamless spin loop
+
+The spin video plays on a loop on the badge page, so the last frame has to lead straight back into the first, with no jump in angle or speed. Every way of recording the spin (photo spin, auto, by hand, with or without the ring) follows the same rules:
+
+1. **Steady speed before recording.** Recording starts only once the table is turning steadily, so the start-up isn't in the clip. With the ring: the speed over the last second is within 5% of the speed over the last 3 seconds. Wait up to 10 s, then record anyway and say the loop may not be clean. Without the ring: the user says it's turning steadily (**Ready**).
+2. **Record a little more than one turn:** a short lead-in (0.5 s), then 360°, then the overlap (default 15°, about 0.6 s at 15 s per turn). With the ring, the app stops by itself once that much has turned. Without it, the user presses **Done** once the table has gone a little past where it started.
+3. **Cut exactly one revolution.** The start is the first ring reading after the lead-in. The end is the moment the angle reaches the start plus 360°, interpolated between readings. The transcoder takes `[start, end)` and nothing outside it. At 15 s per turn and 30 fps, a frame is 0.7°, so the worst mismatch at the splice is about 0.4°, which can't be seen.
+4. **Check the speed.** If the speed across the cut varies by more than 10% (someone touched the table, or it stuttered), the job still succeeds, but the app and the editor say the loop may show a jump.
+5. **Without the ring, match frames.** While recording, keep a 64×48 greyscale thumbnail of each analysis frame with its timestamp. The reference is the frame at the end of the lead-in. The end is the later frame, at least 75% of the way through the recording, with the smallest mean absolute difference from the reference. If even that difference is large (the badge moved, or less than a turn was recorded), keep the whole clip, capped at 30 s, and say it won't loop cleanly.
+6. **No crossfade** for now. The cut is accurate enough, and the light box lighting is constant. If a jump still shows, the overlap past 360° already holds the frames for a short crossfade (4–6 frames) at the splice.
+
+Turning the table by hand never gives a steady speed, so manual mode asks the user to start the table's own motor with its remote. The phone's own spin capture already waits for steady rotation before recording (see **Without IR** above).
+
+### Auto mode (stop at each view)
 
 ```mermaid
 stateDiagram-v2
     [*] --> Prechecks
     Prechecks --> Calibrate: not calibrated
     Calibrate --> Prechecks
-    Prechecks --> SambaAlert: sync on, share not set up or unreachable
-    SambaAlert --> Prechecks: save locally only
-    SambaAlert --> [*]: cancel
     Prechecks --> LockCamera: all good
     LockCamera --> Still0
     Still0 --> Move: next angle
@@ -231,26 +260,25 @@ stateDiagram-v2
 1. **Prechecks**
    - Calibration is valid. If not, the app prompts to calibrate.
    - There is enough free storage (500 MB or more).
-   - If `syncToSamba` is on and Samba isn't configured or can't be reached (5 s connection timeout), an alert offers **Save locally only** or **Cancel** (fix it in Settings first).
 2. **Lock** AF, AE and AWB using the current preview settings.
-3. **0° (front).** 0° is the table's angle at the moment **Capture** is pressed, because that's how the user framed the badge. All other angles are relative to it, so a slightly bumped table doesn't matter.
+3. **0° (front).** 0° is the **front**: the ring angle stored with **Set front** on the Capture screen (or from the editor). If the table is more than 2° from it, the app turns there first; in manual mode it asks the user to. With no front set, 0° is the table's angle at the moment **Capture** is pressed, because that's how the user framed the badge. All other angles are relative to it, so a slightly bumped table doesn't matter. With a calibration, Set front also makes the front the zero and presses Set Origin there, so homing returns to it and the next badge goes on facing the camera.
 4. **90°, 180°, 270°.** For each: move, wait for the angle to settle (stable for 300 ms), then capture. If the table doesn't move, the sequence stops and shows "Can't move the turntable" with **Retry**, **Switch to manual** (for the remaining views) or **Stop** (keep the views already captured).
 5. **Spin video** (if `captureVideo` is on):
    - Start recording with the same locks, send continuous rotation, and log the angle against the frame timestamp.
    - On the JAYEGT, use 15 s per revolution. At 8 s the rim moves about 57 mm/s and smears the ring. At 30 s the clip would need speeding up to fit the 30 s limit.
    - Stop after 360° plus an overlap (default 15°), then stop the table.
-   - Afterwards, **trim the clip to exactly one revolution**, from the frame at the start angle to the frame back at the start angle, so it loops seamlessly on the site. This also solves the looping item in [TODO.md](../TODO.md).
-6. **Write** the badge folder (see [Output](#output)), queue the sync, and **home** the table back to 0° so the next badge can be placed.
+   - Afterwards, **trim the clip to exactly one revolution**, from the frame at the start angle to the frame back at the start angle, so it loops seamlessly on the site (see [Seamless spin loop](#seamless-spin-loop)). This also solves the looping item in [TODO.md](../TODO.md).
+6. **Write** the badge folder (see [Output](#output)) and **home** the table back to 0° so the next badge can be placed.
 
 The screen stays on during a sequence. If the app goes to the background, the sequence aborts cleanly and keeps the views already captured.
 
 ### Manual mode
 
-Manual mode is turned on with the **Auto turntable** checkbox on the Capture screen. It's used when IR or the ring isn't available, or for odd setups.
+Manual mode is turned on by unticking **Auto table** on the Capture screen (or **Automatic turntable** in the badge's options). From the editor, it's the by-hand capture buttons. It's used when IR or the ring isn't available, or for odd setups.
 
 - For each view, the app tells the user what to do, for example "Turn the table to 90° (badge side facing camera)". If the ring can be read, it also shows a dial with the current angle against the target, which turns green within tolerance.
 - **Capture** starts a short countdown (default 2 s, configurable) so the table and phone can stop moving after being touched. If the ring is visible, the app also waits for the angle to be stable before taking the shot.
-- **Video in manual mode:** the user starts the table spinning (with its remote or by hand) and taps **Record**. If the ring is visible, recording stops automatically after 360° plus the overlap. Otherwise the user taps **Stop**.
+- **Video in manual mode:** the app asks the user to start the table turning with its remote (continuous rotation) and tap **Ready** once it's turning steadily. Recording starts then, not before, so the start-up isn't in the clip. If the ring is visible, recording stops by itself after the lead-in, 360° and the overlap. Otherwise the app asks the user to tap **Done** once the table has gone a little more than once round. Then it says the table can be stopped. See [Seamless spin loop](#seamless-spin-loop).
 
 ### Extra shots
 
@@ -335,8 +363,7 @@ The app never runs git. Committing stays a PC step.
 
 - **Settings fields:** host, port (default 445), share, base path, domain, username and password (encrypted with the Keystore).
 - **Test connection** runs each step and reports pass/fail for each: resolve host → connect → authenticate → open share → list the base path → write and delete a test file.
-- **How sync runs:** a WorkManager job uploads changed files for each session, compared by size and modified time. Each file is written to a temporary name and then renamed, so a half-uploaded file never looks complete. Sync runs when the network is available, and **Sync now** on the Sessions screen triggers it immediately.
-- **After "Save locally only":** the session stays marked for sync and uploads automatically the next time the share can be reached.
+- **How sync runs:** sync is manual. **Sync** on a session (the row's button, or long-press) or **Sync all to Samba** in the Sessions menu queues a WorkManager job, which uploads the session's changed files, compared by size and modified time, when the network is available. Each file is written to a temporary name and then renamed, so a half-uploaded file never looks complete. A session changed after syncing shows as not synced again.
 - **Clashes:** if a new session's slug already exists on the share, the app warns before overwriting. Appending to an existing session merges into its folder.
 
 ## Remote control from the editor
@@ -363,10 +390,10 @@ flowchart LR
 
 The editor is served over HTTPS, and the phone is a plain-HTTP device on the LAN. Browsers normally block that as mixed content. Chrome's [Local Network Access](https://developer.chrome.com/docs/modern-web-guidance/guides/security/local-network-access) rules (also in Edge, which is Chromium) allow it once the user grants the site a one-time "access devices on your local network" permission:
 
-- **fetch:** requests pass `targetAddressSpace: 'local'`. That exempts `http://` to a local address from mixed-content blocking once the permission is granted.
+- **fetch:** requests pass `targetAddressSpace: 'local'` (`'loopback'` for `localhost`, such as the mock phone). That exempts `http://` to a local address from mixed-content blocking once the permission is granted.
 - **WebSocket:** `ws://` from an HTTPS page is exempt when the host is a private IP literal (such as `192.168.10.23`) or a `.local` name. The WebSocket constructor takes no options, so it can't use a hostname that only resolves locally.
-- **CORS:** the phone sends ordinary CORS headers for the editor's origins. The older Private Network Access preflight headers (`Access-Control-Allow-Private-Network`) are deprecated and not needed.
-- **First request:** the editor checks `navigator.permissions.query({name: 'local-network'})`. If it's `prompt`, the first request is made from a click (the **Connect** button), so the permission prompt can appear. The editor listens for permission changes, so a later revoke shows up as "Not allowed to reach local devices", with a pointer to site settings.
+- **CORS:** the phone sends ordinary CORS headers, echoing any origin. The older Private Network Access preflight headers (`Access-Control-Allow-Private-Network`) are deprecated and not needed.
+- **First request:** the editor checks `navigator.permissions.query({name: 'local-network'})` (falling back to the older name `local-network-access`). If it's `prompt`, the first probe waits for a click on **Find phones**, so the permission prompt can appear. The editor listens for permission changes, so a later revoke shows up as "Not allowed to reach local devices", with a pointer to site settings.
 
 The editor already needs Chrome or Edge for File System Access, so this adds no new browser limits. Firefox and Safari would block these requests.
 
@@ -385,64 +412,43 @@ A probe is `GET /api/info` with a 1.5 s timeout, sent to every candidate at once
 The API runs a camera and an IR blaster, so it's not open to anyone on the network:
 
 - **Off by default.** The server only runs while **Settings → Remote control** is on and the app is in the foreground. It listens on Wi-Fi only, on port 8737 (configurable).
-- **Pairing.** On the first connection the phone shows a 6-digit code, and the user types it into the editor. `POST /api/pair` swaps the code for a random 128-bit token, which the editor keeps in `localStorage` for that phone. Codes expire after 2 minutes, and five wrong guesses lock pairing for a minute. **Settings → Remote control** lists paired PCs and can revoke them.
-- **Every request** carries `Authorization: Bearer <token>`, except `/api/info` and `/api/pair`. Browsers can't set headers on a WebSocket, so its first message must be `{"token": …}`, and the phone closes the socket if it isn't.
-- **Origins.** CORS allows only `https://hamster.github.io`, `http://localhost:4000` and `http://127.0.0.1:4000` (`jekyll serve`), plus any extra origins added in Settings. CORS only restrains browsers; the token is what keeps other clients out.
+- **Pairing.** On the first connection the phone shows a 6-digit code, and the user types it into the editor. `POST /api/pair` swaps the code for a random 128-bit token, which the editor keeps in `localStorage` for that phone. Codes expire after 2 minutes, and five wrong guesses lock pairing for a minute. The phone stores only SHA-256 hashes of the tokens. **Settings → Remote control** lists paired PCs and can revoke them.
+- **Every request** carries `Authorization: Bearer <token>`, except `/api/info` and `/api/pair`. Browsers can't set headers on a WebSocket, so its first message must be `{"type": "auth", "token": …}`, and the phone closes the socket if it isn't.
+- **Origins.** The phone accepts calls from any origin. CORS only restrains browsers anyway, so the pairing code (shown only on the phone) and the token are what keep other pages and clients out. An allow-list of editor origins only got in the way, for example with a local copy of the editor.
 - **Plain HTTP.** Traffic, including the token, is unencrypted on the LAN. That's acceptable on a home network, and the token can be revoked. If it isn't acceptable, HTTPS would need a certificate the browser trusts for a LAN address, which is a lot of setup for little gain.
 
 ### On the phone
 
-- The Capture screen stays open with the screen on, as it does for local use, because the camera needs the app in the foreground. A banner shows "Controlled from &lt;PC name&gt;". Local controls still work.
-- **One job at a time.** Calibration, a capture sequence or an extra shot is a job. A command that needs the camera or turntable while a job runs gets `409 Busy`. **Stop** on either side aborts the job.
-- **Prompts.** Moments that need a decision, such as a move failure (**Retry**, **Switch to manual** or **Stop**) or a manual-mode instruction ("Turn the table to 90°"), show on both the phone and the editor. The first answer wins.
-- **If the app goes to the background,** the server stops and the editor shows the phone as disconnected. Shots taken so far are kept on the phone.
-- **Shots.** In remote mode, the phone keeps a single unnamed set of shots: no badge identity, slug or `index.md`. Files use the standard names (`front.jpg`, `lanyard.jpg`, …), and the editor decides where they go. The phone keeps the shots until the editor clears them after saving.
+- The server runs while the Capture (Camera) screen is visible and **Settings → Remote control** is on: it starts in `onStart` and stops in `onStop`, closing WebSockets with 1001, so the editor shows the phone as disconnected. A job still running when the screen goes away is stopped, keeping the shots taken. A banner shows the name, address and pairing code, and "Controlled from &lt;PC name&gt;". Local controls still work.
+- **One job at a time.** Calibration, a capture, an extra shot or a move is a job, whether the phone or the editor started it. A command that needs the camera or turntable while a job runs gets `409 busy`. **Stop** on either side aborts the job; on the phone it answers a prompt's Stop if one is showing.
+- **Prompts.** A move failure (**Retry**, **Switch to manual** or **Stop**) is a dialog on the phone and a prompt in the editor. A manual-mode instruction ("Turn the table to 90°", or for the spin, "Start the table turning with its remote…") shows in the status line, answered with **Ready**. A spin by hand without the ring also asks for **Done** once the table has gone a little more than once round. The first answer wins, and the phone closes its dialog when the editor answers first.
+- **Shots.** Captures the editor starts go into one unnamed set of shots held for the editor: no badge identity, slug or `index.md`. Files use the standard names (`front.jpg`, `lanyard.jpg`, …), and the editor decides where they go. They're kept (in `files/remote/`, indexed by `shots.json`) until the editor deletes them. Captures started on the phone go into the open badge, or, in setup mode, into the editor's shots.
+- **Not done yet:** Kelvin white balance (reported as unsupported), and backward moves (`by` below 0 is refused with `422`).
 
 ### API
 
-JSON over HTTP, at `http://<phone>:8737/api/`. Errors return `{"error": "<code>", "message": "<text for the user>"}` with a matching HTTP status.
+The full contract, with every request and response, the error codes, jobs and prompts, shot naming and the WebSocket and preview-frame formats, is in **[Remote-API.md](Remote-API.md)**. A mock phone that implements it, used to build and test the editor panel, is in [badge-turntable/remote-mock/](badge-turntable/remote-mock/README.md). In short:
 
-| Method and path | Purpose |
-| --- | --- |
-| `GET /info` | No auth. Name, phone model, app and API versions, a stable device ID, and whether this browser's token is still valid (if one is sent) |
-| `POST /pair` | `{code, clientName}` → `{token}` |
-| `GET /status` | Turntable profile, calibration summary, ring reading, camera settings, current job, shot count |
-| `GET /camera` / `POST /camera` | Capabilities (from the probe) and current settings / change them: lens, zoom, focus point (normalised x, y), focus lock, EV, ISO and shutter, white balance and locks. Saved to the light box profile, as on the phone |
-| `POST /turntable/press` | `{role}`: press one button, the same as the Test buttons |
-| `POST /turntable/move` | `{degrees}` or `{home: true}`: a closed-loop move |
-| `POST /calibrate` | Start calibration. Returns `202 {jobId}` |
-| `POST /capture` | `{video, auto, setLabel}`: a turntable set, or an extra set when `setLabel` is given. `202 {jobId}` |
-| `POST /extra` | `{label}`: one extra shot. `202 {jobId}` |
-| `POST /jobs/current/answer` | Answer a prompt: `{answer: "retry" \| "manual" \| "stop" \| "ready"}` |
-| `DELETE /jobs/current` | Abort the job |
-| `GET /shots` | The shots held: ID, kind (view, extra, spin), label, standard file name and caption, nominal and actual angle, time, size, and dimensions |
-| `GET /shots/{id}` | The web copy (2400 px JPEG, or the transcoded MP4). `?variant=original` gives the full-resolution file or source video |
-| `DELETE /shots/{id}`, `DELETE /shots` | Drop one shot, or all of them after saving |
-| `GET /session.json` | The capture record (actual angles, camera settings, calibration), for `_capture/` |
-
-**WebSocket `/live`.** After the token message, the phone sends:
-
-- **status** about twice a second: job state, ring angle, marker count, calibration state;
-- **ring** about 5 times a second: angle plus marker centres and the axis line in normalised image coordinates, so the editor can draw the overlay itself;
-- **job events:** progress ("Moving to 90°…"), prompts, shots as they're taken, and done or failed;
-- **preview frames** as binary messages, each a JPEG with a small header giving the frame time and rotation.
-
-The editor can send `{"preview": {"fps": 8, "width": 640}}` to change the preview, or `{"preview": false}` to pause it, for example while the tab is hidden. Preview frames come from the `ImageAnalysis` frames the ring detector already gets. They're scaled to 640 px and JPEG-encoded at quality 70, about 30–40 KB each, so 8 fps is roughly 300 KB/s. No extra camera stream is needed.
+- JSON over HTTP at `http://<phone>:8737/api/`, with `Authorization: Bearer <token>` on everything except `GET /info` and `POST /pair`.
+- `GET /status` and `GET`/`POST /camera` read and set state. `POST /turntable/press` sends one IR code.
+- Calibration, captures, extra shots and closed-loop moves are **jobs** (`202 {job}`), one at a time. A job raises **prompts** (move failed, turn the table by hand), and the first answer from the phone or any editor tab wins.
+- `GET /shots` lists what the phone holds, in the standard order with standard names and captions. `GET /shots/{id}` downloads the web copy, the original or a thumbnail. `GET /session.json` is the capture record for `_capture/`.
+- The WebSocket `/live` authenticates with its first message, then streams status, ring readings (with marker positions for the overlay), job and shot events, and binary preview frames (a 16-byte header, then a JPEG). Preview frames come from the `ImageAnalysis` frames the ring detector already gets, at about 8 fps and 640 px, so no extra camera stream is needed.
 
 ### In the editor
 
-A **Turntable** panel in `/edit/` (its own script, `edit/turntable.js`) contains:
+A **Turntable** panel in `/edit/` (its own script and styles, [edit/turntable.js](../edit/turntable.js) and [edit/turntable.css](../edit/turntable.css)) is built and tested against the mock phone. It contains:
 
-- **Devices:** the probe list, **Add by address**, **Connect** (which triggers the browser permission) and pairing.
-- **Preview:** the live JPEG frames, with the ring overlay and angle readout. Click to focus there. Controls for lens, zoom, exposure, white balance and locks.
-- **Turntable:** **Calibrate** (with progress and summary), **Step 90°**, **Home**, and a Test button for each role.
-- **Capture:** **Capture** (with a video on/off toggle), **Extra shot** with the same label chips as the phone, **Extra set**, and **Stop**. Prompts appear as dialogs.
-- **Shots tray:** thumbnails of what the phone holds. **Add to badge** downloads the web copies as files and adds them to the editor's media list, the same way a drag-and-drop does. They keep their standard names and captions, in the [standard order](#extra-shots), with `front.jpg` highlighted.
+- **Phones:** **Find phones** probes `badge-turntable.local`, remembered phones and added addresses. **Add by address**, **Pair…** (type the code shown on the phone), **Connect**, **Disconnect** and **Forget**. The last phone used reconnects when the panel opens. If the browser hasn't been given local network access yet, the first probe waits for a click on **Find phones**, so the permission prompt appears.
+- **Preview:** the live JPEG frames, with the ring overlay (axis and markers), an optional thirds grid, and the table and ring angle readout. Click to focus on a spot (focus only, not exposure): it stays there, marked with a ring, until **Back to auto**, and a capture replaces it with its own centre focus, so it's mainly for extra shots of a detail. Under the preview: lens (if there's more than one), zoom, **Brightness** (exposure compensation; exposure stays automatic) and a focus line saying what focus is doing. **More camera settings** folds away manual exposure (ISO and shutter), manual focus distance, white balance (presets or Kelvin) and **Hold** boxes for exposure, focus and white balance (the AE, AF and AWB locks). All are built from the phone's capabilities and locked while a sequence runs.
+- **Turntable:** the calibration summary and where the front is set, **Calibrate**, **Step 90°** (a checked move once calibrated, otherwise the raw step button), **Home**, **Set front**, **Go to** an angle, and a Test button for each role. The readout under the preview shows how far the table is from the front.
+- **Capture:** a choice of **Main views** or **Extra set:** with a label, then four buttons. **Auto capture** (shown only when the phone has IR for the table, and enabled once it's calibrated) has the phone turn the table for the four stills and then record the spin. **Capture both** does the same by hand, and **Capture stills** and **Capture spin** do one part each by hand. By hand, the phone says what to do with the table, and that depends on its **Capture method**: with **Spin** (the default), start the table turning and stop it when told, and the stills are taken as it passes each angle; with **Stop at each view**, a prompt asks for each view. For a spin on its own, a prompt asks the user to start the table's motor, then says when it can stop (see [Seamless spin loop](#seamless-spin-loop)). A line under the buttons says which applies. Then **Extra shot** with the same label chips as the phone, **Stop**, and a progress line. If the phone drops out of contact mid-job (no message for 4 s), the panel says so and disables the controls, and the job carries on on the phone, where **Stop** still works. **Stop** in the editor is held and sent when the phone is back, if the same job is still running. The countdown shows over the preview. Prompts appear as a dialog that leaves the preview usable, with a dial of the table's angle against the target in manual mode.
+- **Shots tray:** thumbnails of what the phone holds, with angle and size. **Add** or **Add all to badge** downloads the web copies and adds them to the editor's media list, the same way a drag-and-drop does. They keep their standard names and captions, in the [standard order](#extra-shots), with `front.jpg` highlighted if nothing else is. A re-shot file replaces the entry with the same name. Shots already added are marked. Each shot can be deleted from the phone, and **Delete all on phone** clears them.
 
 Then the editor works as it does today: the user fills in the fields, the badge ID suggestion comes from the repo it has open, and **Save** writes `_badges/<con>/<slug>/`. Two options appear when shots came from the turntable:
 
-- **Also save originals:** writes the full-resolution stills, the source video and `session.json` to `_capture/<con>/<slug>/` in the same repo folder. Jekyll ignores folders starting with `_`, and `_capture/` gets added to `.gitignore`, so the originals are neither published nor committed.
-- **Clear shots on the phone after saving** (on by default).
+- **Also save originals** (off by default, remembered): writes the full-resolution stills, the source video and `session.json` to `_capture/<con>/<slug>/` in the same repo folder. Jekyll ignores folders starting with `_`, and `_capture/` gets added to `.gitignore`, so the originals are neither published nor committed.
+- **Remove the saved shots from the phone afterwards** (on by default). Only shots that went into the badge are removed; anything not added stays on the phone. If an original can't be fetched, that shot is left on the phone too.
 
 ### What this changes elsewhere
 
@@ -455,7 +461,7 @@ Then the editor works as it does today: the user fills in the fields, the badge 
 A spike settles these before the rest is built: a bare server on the phone serving `/api/info`, a preview WebSocket and one still, plus a test page on GitHub Pages.
 
 1. **Permission flow:** the Local Network Access prompt and its persistence in Chrome and Edge, from the GitHub Pages origin, for both fetch and `ws://`. The docs don't say how long a grant lasts.
-2. **Name resolution:** `.local` from Windows Chrome to JmDNS on the phone. Some routers filter multicast or isolate Wi-Fi clients. Manual address entry is the fallback.
+2. **Name resolution:** `.local` from Windows Chrome to the app's mDNS responder. Some routers filter multicast or isolate Wi-Fi clients. Manual address entry is the fallback.
 3. **Preview cost:** frame rate, latency and phone CPU for 640 px JPEG previews alongside ring detection.
 4. **Transfer time:** pulling 4 stills of about 1 MB each plus a spin video of about 10 MB over Wi-Fi. Expected to take a few seconds.
 
@@ -481,15 +487,15 @@ The app depends on, or benefits from, these changes to the badge museum site its
 - **Caching:** results are cached by source hash with `actions/cache`, so unchanged media is copied rather than re-encoded.
 - **In the repo:** to shrink oversized videos before committing, run `python .github/scripts/optimize_media.py --root _badges --no-images`.
 
-### Editor Turntable panel (planned)
+### Editor Turntable panel (built; the app side is written, not yet tested together)
 
-A **Turntable** panel in `/edit/` that drives the phone over the LAN and saves its shots with the badge. See [Remote control from the editor](#remote-control-from-the-editor). It also adds `_capture/` to `.gitignore` for the optional originals.
+A **Turntable** panel in `/edit/` that drives the phone over the LAN and saves its shots with the badge. See [Remote control from the editor](#remote-control-from-the-editor). `_capture/` is in `.gitignore` for the optional originals. It's tested end to end against the [mock phone](badge-turntable/remote-mock/README.md), but not yet against the real app or from the GitHub Pages origin.
 
 ## Build phases
 
 The order puts a usable tool in hand early, before the riskier IR and vision work.
 
-A first-draft project for phases 1 and 3–7 is in [badge-turntable/](badge-turntable/). It covers the screens, camera, ring detector, turntable control, sequencer, transcoder and Samba sync, but not remote control. Its plain-Java core is unit-tested, but the Android code has never been compiled. [badge-turntable/README.md](badge-turntable/README.md) lists what's missing and what will likely need fixing.
+The app is in [badge-turntable/](badge-turntable/). It builds with Gradle and has run on the OnePlus 13 and a OnePlus 9 Pro. It covers the screens, camera, ring detector, turntable control, calibration, spin and stop-at-each-view captures, the transcoder, Samba sync and remote control. [badge-turntable/README.md](badge-turntable/README.md) lists what's missing.
 
 1. **Camera and manual capture.**
    - Capabilities probe, preview and camera controls, light box profile.
@@ -497,12 +503,12 @@ A first-draft project for phases 1 and 3–7 is in [badge-turntable/](badge-turn
    - Manual-mode stills, extra shots, `index.md` and the folder writer.
 
    This is already useful with the table turned by hand.
-2. **Remote control.** Start with the spike from [Risks to check first](#risks-to-check-first). Then the server, mDNS name, pairing, preview WebSocket and shots API on the phone, and the Turntable panel and save options in the editor. Calibration and capture commands start with manual mode and are completed as phases 4–6 land.
+2. **Remote control.** The API ([Remote-API.md](Remote-API.md)), a mock phone and the editor's Turntable panel and save options are done. On the phone: start with the spike from [Risks to check first](#risks-to-check-first), then the server, mDNS name, pairing, preview WebSocket and shots API. Calibration and capture commands start with manual mode and are completed as phases 4–6 land. The app side is written and unit tested, and works over Wi-Fi from the PC with curl (Nov 5, 2026). Next is the end-to-end test from the editor, starting with the risks above.
 3. **IR and profiles.** Build the profile for your turntable, the Custom setup screens, `.ir` import and the test buttons, and prove that IR reflected inside the light box moves the table.
 4. **Encoder ring.** The generator is done ([encoder-ring/](encoder-ring/)). This phase adds the detector, the live angle overlay, the manual-mode dial and the ring check.
 5. **Calibration and auto mode.** Motion calibration, closed-loop moves, the auto sequence, extra sets and failure handling.
-6. **Spin video.** Recording with an angle log, trimming to one revolution, transcoding.
-7. **Samba (optional).** Settings, test connection, sync worker and the pre-capture alert. Only needed for using the phone without the editor.
+6. **Spin video.** Recording with an angle log, trimming to one revolution, transcoding. Still to do: the [seamless loop](#seamless-spin-loop) rules for spins recorded by hand or without the ring (start recording at a steady speed, cut after a lead-in, match frames without the ring).
+7. **Samba (optional).** Settings, test connection, sync worker and manual sync from the Sessions list. Only needed for using the phone without the editor.
 8. **IR learning.** The USB receiver and firmware, encoder-ring scanning, and the camera-learning spike.
 
 ## Decided

@@ -129,7 +129,7 @@ public final class SmbClient implements Closeable {
         try (File f = share.openFile(tmp, EnumSet.of(AccessMask.GENERIC_WRITE, AccessMask.DELETE), null,
                 SMB2ShareAccess.ALL, SMB2CreateDisposition.FILE_OVERWRITE_IF, null)) {
             try (OutputStream os = f.getOutputStream(); InputStream in = new java.io.FileInputStream(local)) {
-                in.transferTo(os);
+                org.snurkle.badgeturntable.Streams.copy(in, os);
             }
             f.rename(remotePath, true);
         }
@@ -152,8 +152,8 @@ public final class SmbClient implements Closeable {
                 try (File f = share.openFile(index, EnumSet.of(AccessMask.GENERIC_READ), null,
                         SMB2ShareAccess.ALL, SMB2CreateDisposition.FILE_OPEN, EnumSet.of(SMB2CreateOptions.FILE_NON_DIRECTORY_FILE));
                      InputStream in = f.getInputStream()) {
-                    Matcher m = BADGE_ID.matcher(new String(in.readAllBytes(), StandardCharsets.UTF_8));
-                    if (m.find()) ids.add(m.group(1).toUpperCase());
+                    Matcher m = BADGE_ID.matcher(new String(org.snurkle.badgeturntable.Streams.readAll(in), StandardCharsets.UTF_8));
+                    if (m.find()) ids.add(m.group(1).toUpperCase(java.util.Locale.ROOT));
                 }
             }
         }

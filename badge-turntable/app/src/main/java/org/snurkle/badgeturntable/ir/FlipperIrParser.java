@@ -6,6 +6,7 @@ import java.io.Reader;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -60,7 +61,7 @@ public final class FlipperIrParser {
             }
             int colon = line.indexOf(':');
             if (colon <= 0) continue;
-            String key = line.substring(0, colon).trim().toLowerCase();
+            String key = line.substring(0, colon).trim().toLowerCase(Locale.ROOT);
             String value = line.substring(colon + 1).trim();
             if (key.equals("name") && block.containsKey("name")) flush(block, out);
             block.put(key, value);

@@ -1,7 +1,7 @@
 package org.snurkle.badgeturntable.motion;
 
 public final class MoveFailedException extends Exception {
-    public enum Reason { NO_MOVEMENT, RING_LOST, NO_REMOTE, TIMEOUT, STEP_SIZE }
+    public enum Reason { NO_MOVEMENT, RING_LOST, NO_REMOTE, TIMEOUT, STEP_SIZE, REVERSED }
 
     public final Reason reason;
 
@@ -16,6 +16,8 @@ public final class MoveFailedException extends Exception {
             case RING_LOST: return "Can't see the encoder ring. Is something blocking it?";
             case STEP_SIZE: return getMessage();
             case NO_REMOTE: return "This turntable profile has no code for that move.";
+            case REVERSED: return "The turntable changed direction. If it's in intermittent or swing mode, press "
+                    + "Resume Continuous Rotation on the remote, then try again.";
             default: return "The turntable didn't reach its position in time.";
         }
     }

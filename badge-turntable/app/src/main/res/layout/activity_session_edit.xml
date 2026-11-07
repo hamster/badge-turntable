@@ -136,21 +136,26 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@string/opt_auto" />
-
-            <CheckBox
-                android:id="@+id/opt_sync"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/opt_sync" />
         </LinearLayout>
     </ScrollView>
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:gravity="end"
+        android:gravity="end|center_vertical"
         android:orientation="horizontal"
         android:padding="16dp">
+
+        <!-- Why Save is greyed out, when it is -->
+        <TextView
+            android:id="@+id/save_hint"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="12dp"
+            android:layout_weight="1"
+            android:gravity="end"
+            android:textAppearance="?attr/textAppearanceBodyMedium"
+            android:textColor="?attr/colorError" />
 
         <Button
             android:id="@+id/save"

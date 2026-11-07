@@ -122,7 +122,7 @@ public final class SessionStore {
 
     public String template() throws IOException {
         try (InputStream in = context.getAssets().open("template/index.md")) {
-            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+            return new String(org.snurkle.badgeturntable.Streams.readAll(in), StandardCharsets.UTF_8);
         }
     }
 
@@ -149,7 +149,6 @@ public final class SessionStore {
         Session s = new Session();
         s.captureVideo = p.getBoolean("captureVideo", true);
         s.autoMode = p.getBoolean("autoMode", true);
-        s.syncToSamba = p.getBoolean("syncToSamba", true);
         s.con = p.getString("con", "defcon");
         s.year = java.time.Year.now().getValue();
         return s;
@@ -159,7 +158,7 @@ public final class SessionStore {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
                 .putBoolean("captureVideo", s.captureVideo)
                 .putBoolean("autoMode", s.autoMode)
-                .putBoolean("syncToSamba", s.syncToSamba)
+                .remove("syncToSamba")
                 .putString("con", s.con)
                 .apply();
     }

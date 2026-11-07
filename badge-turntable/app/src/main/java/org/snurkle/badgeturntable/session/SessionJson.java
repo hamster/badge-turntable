@@ -15,7 +15,7 @@ public final class SessionJson {
                 .put("group", s.group).put("event", s.event)
                 .put("slug", s.effectiveSlug()).put("slugEdited", s.slugEdited)
                 .put("badgeId", s.badgeId)
-                .put("captureVideo", s.captureVideo).put("autoMode", s.autoMode).put("syncToSamba", s.syncToSamba)
+                .put("captureVideo", s.captureVideo).put("autoMode", s.autoMode)
                 .put("syncState", s.syncState.name());
         JSONArray media = new JSONArray();
         for (Session.Media m : s.media) {
@@ -46,7 +46,6 @@ public final class SessionJson {
         s.badgeId = o.optString("badgeId");
         s.captureVideo = o.optBoolean("captureVideo", true);
         s.autoMode = o.optBoolean("autoMode", true);
-        s.syncToSamba = o.optBoolean("syncToSamba", true);
         s.syncState = Session.SyncState.valueOf(o.optString("syncState", Session.SyncState.LOCAL_ONLY.name()));
         JSONArray media = o.optJSONArray("media");
         if (media != null) {
