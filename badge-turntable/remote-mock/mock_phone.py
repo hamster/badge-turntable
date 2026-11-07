@@ -11,6 +11,8 @@ Needs Python 3.10+ and Pillow. ffmpeg (optional) makes real spin videos.
     python mock_phone.py                    # phone on :8737, editor on :4000
     python mock_phone.py --code 123456      # fixed pairing code
     python mock_phone.py --fail-move 2      # the 2nd closed-loop move fails
+    python mock_phone.py --sessions 2       # two sessions captured on the phone, one open
+    python mock_phone.py --camera-closed    # the phone isn't on its Camera screen
 
 Then open http://localhost:4000/badges/edit/ in Chrome or Edge. The editor is
 served from a checkout of the badges site repo (hamster/badges), by default
@@ -38,7 +40,7 @@ import threading
 import time
 import unicodedata
 from http.server import BaseHTTPRequestHandler, SimpleHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 try:
     from PIL import Image, ImageDraw, ImageEnhance, ImageFont
@@ -401,12 +403,17 @@ class Client:
 class Job:
     _n = 0
 
-    def __init__(self, phone, kind, params):
+    def __init__(self, phone, kind, params, source="editor", target=None):
         Job._n += 1
         self.phone = phone
         self.id = "j-%d" % Job._n
         self.kind = kind
         self.params = params
+        self.source = source
+        # Where its files go: {kind: session | shots | none, sessionId, name}
+        self.target = target or {"kind": "none", "sessionId": None, "name": None}
+        self.stopped_by = None
+        self.filenames = []
         self.state = "running"
         self.progress = {"step": None, "of": None, "text": "Starting…"}
         self.prompt = None
@@ -422,10 +429,20 @@ class Job:
         self.moved = False
 
     def to_json(self):
-        return {"id": self.id, "kind": self.kind, "params": self.params, "state": self.state,
+        return {"id": self.id, "kind": self.kind, "source": self.source, "target": dict(self.target),
+                "params": self.params, "state": self.state,
                 "progress": dict(self.progress), "prompt": self.prompt, "startedAt": self.started_at,
                 "endedAt": self.ended_at, "result": self.result, "error": self.error,
-                "shotIds": list(self.shot_ids)}
+                "stoppedBy": self.stopped_by, "shotIds": list(self.shot_ids), "filenames": list(self.filenames)}
+
+    def describe(self):
+        """"The phone is capturing Mk9", for busy messages."""
+        who = "The editor" if self.source == "editor" else "The phone"
+        what = {"calibrate": "is calibrating", "capture": "is capturing", "extra": "is taking an extra shot"}.get(
+            self.kind, "is moving the table")
+        into = (" " + self.target["name"]) if self.target["kind"] == "session" else \
+            " (shots for the editor)" if self.target["kind"] == "shots" else ""
+        return "%s %s%s" % (who, what, into)
 
     def check(self):
         if self.abort_flag.is_set():
@@ -491,6 +508,12 @@ class Phone:
         self.shots = {}
         self.shot_n = 0
         self.set_order = []
+        # Sessions captured on the phone on its own (Remote-API.md, Sessions), by ID.
+        self.sessions = {}
+        # The shared capture target (Remote-API.md, Capture target).
+        self.target = {"kind": "none", "sessionId": None, "name": None, "setBy": None, "editorJoined": False}
+        # Whether the phone is on its Capture screen (the camera endpoints need it).
+        self.camera_open = not args.camera_closed
         self.jobs = {}
         self.job = None
         self.last_job = None
@@ -500,6 +523,10 @@ class Phone:
         self.offline_until = 0.0  # /mock/offline: as if the phone dropped off Wi-Fi
         self.clients = []
         self.ffmpeg = shutil.which("ffmpeg")
+        for i in range(args.sessions or 0):
+            s = self.mock_session("Mock badge %d" % (i + 1))
+            if i == args.sessions - 1:
+                self.set_target({"kind": "session", "sessionId": s["id"], "name": s["name"]}, "phone")
         self.rotate_code()
         for target in (self._status_loop, self._ring_loop, self._preview_loop, self._code_loop):
             threading.Thread(target=target, daemon=True).start()
@@ -588,18 +615,24 @@ class Phone:
         with self.lock:
             job = self.job.to_json() if self.job else None
             shots = list(self.shots.values())
+            sessions = list(self.sessions.values())
         try:
             free = shutil.disk_usage(HERE).free
         except OSError:
             free = None
+        closed_ring = {"ok": False, "ringDeg": None, "tableDeg": None, "frontDeg": None, "markers": 0,
+                       "rmsPx": None, "frameUs": None}
         return {
             "clients": [{"clientName": c.client_name, "since": c.since} for c in self.clients if not c.dead],
+            "cameraOpen": self.camera_open,
+            "target": dict(self.target),
+            "sessions": {"count": len(sessions), "bytes": sum(session_bytes(s) for s in sessions)},
             "turntable": {"profileId": "jayegt-5.74", "profileName": "JAYEGT 5.74 in", "irAvailable": True,
                           "roles": list(JAYEGT_ROLES),
                           "frontRingDeg": None if self.front is None else round(self.front, 2)},
             "calibration": self.calibration_json(),
-            "ring": self.ring_json(),
-            "camera": dict(self.camera),
+            "ring": self.ring_json() if self.camera_open else closed_ring,
+            "camera": dict(self.camera) if self.camera_open else None,
             "job": job,
             "shots": {"count": len(shots), "bytes": sum(s["web"]["bytes"] for s in shots)},
             "storage": {"freeBytes": free},
@@ -633,7 +666,7 @@ class Phone:
     def _ring_loop(self):
         while True:
             time.sleep(0.2)
-            if not self.clients:
+            if not self.clients or not self.camera_open:
                 continue
             _, markers, axis = render_scene(160, 120, self.table.angle(), self.zero(), cam=self.camera,
                                             ring_visible=self.ring_ok())
@@ -645,7 +678,8 @@ class Phone:
         while True:
             time.sleep(1 / 30)
             now = time.monotonic()
-            due = [c for c in list(self.clients) if not c.dead and c.preview["enabled"] and now >= c.next_frame_at]
+            due = [c for c in list(self.clients) if not c.dead and c.preview["enabled"] and now >= c.next_frame_at
+                   and self.camera_open]
             if not due:
                 continue
             cache = {}
@@ -664,11 +698,17 @@ class Phone:
 
     # -- jobs ---------------------------------------------------------------
 
-    def start_job(self, kind, params, fn):
+    def busy(self):
+        """409 busy naming who is running what (call holding the lock, with a job running)."""
+        j = self.job
+        return ApiError(409, "busy", "%s. Wait for it, or stop it." % j.describe(), jobId=j.id, source=j.source,
+                        target=dict(j.target))
+
+    def start_job(self, kind, params, fn, target=None, source="editor"):
         with self.lock:
             if self.job:
-                raise ApiError(409, "busy", "%s is running. Stop it first." % self.job.kind.capitalize(), jobId=self.job.id)
-            job = Job(self, kind, params)
+                raise self.busy()
+            job = Job(self, kind, params, source, target)
             self.job = job
             self.jobs[job.id] = job
         print("Job %s %s %s" % (job.id, kind, json.dumps(params)))
@@ -710,7 +750,7 @@ class Phone:
         self.push_job(job)
         self.push_status()
 
-    def answer(self, body):
+    def answer(self, body, by="editor"):
         with self.lock:
             job = self.job
             if not job:
@@ -722,19 +762,141 @@ class Phone:
             if ans not in p["answers"]:
                 raise ApiError(400, "bad_request", "Answer must be one of %s." % ", ".join(p["answers"]), field="answer")
             job.answer = ans
+            if ans == "stop" and not job.stopped_by:
+                job.stopped_by = by
             job.prompt = None
             job.state = "running"
             job.answer_event.set()
         self.push_job(job)
         return job
 
-    def abort(self):
+    def abort(self, by="editor"):
         with self.lock:
             job = self.job
             if not job:
                 raise ApiError(409, "no_job", "Nothing is running.")
+            if not job.stopped_by:
+                job.stopped_by = by
             job.abort_flag.set()
         return job
+
+    # -- capture target and sessions --------------------------------------
+
+    def set_target(self, t, by):
+        """Changes the shared capture target (refused while a job runs) and tells every tab."""
+        with self.lock:
+            if self.job:
+                raise self.busy()
+            prev = dict(self.target)
+            kind = t["kind"]
+            self.target = {"kind": kind, "sessionId": t.get("sessionId"), "name": t.get("name"),
+                           "setBy": by if kind != "none" else None,
+                           "editorJoined": by == "editor" and kind != "none"}
+        print("  target %s %s (by %s)" % (kind, t.get("name") or "", by))
+        self.broadcast({"type": "target", "target": dict(self.target), "previous": prev, "by": by})
+        self.push_status()
+        return dict(self.target)
+
+    def target_for(self, source):
+        """The job target for a capture from this side (Remote-API.md, Capture target)."""
+        t = self.target
+        if source == "editor":
+            if t["kind"] == "none":
+                t = self.set_target({"kind": "shots"}, "editor")
+            elif t["kind"] == "session" and not t["editorJoined"]:
+                raise ApiError(409, "session_open", "The phone has %s open. Join it, or start a new set, first." % t["name"],
+                               sessionId=t["sessionId"])
+        return {"kind": t["kind"], "sessionId": t["sessionId"], "name": t["name"]}
+
+    def require_camera(self):
+        if not self.camera_open:
+            raise ApiError(503, "camera_unavailable", "Open the Camera screen on the phone.")
+
+    def open_camera(self):
+        if not self.camera_open:
+            time.sleep(0.8)  # the screen opens and the camera binds
+            self.camera_open = True
+            print("  Camera screen opened (by the editor)")
+            self.push_status()
+        return {"cameraOpen": True}
+
+    def mock_session(self, name, notes="Made by the mock phone."):
+        """A session as if captured on the phone on its own: the four views and a lanyard shot."""
+        sid = secrets.token_hex(16)
+        s = {"id": sid, "name": name, "notes": notes, "createdAt": now_iso(), "updatedAt": now_iso(),
+             "media": []}
+        with self.lock:
+            self.sessions[sid] = s
+        for nominal, view, caption in VIEWS:
+            self.session_still(s, view + ".jpg", caption, "%s · %s" % (name, caption), "view", view=view,
+                               nominal=nominal, actual=nominal + round(random.uniform(-0.6, 0.6), 2))
+        self.session_still(s, "lanyard.jpg", "Lanyard", name + " · Lanyard", "extra", label="Lanyard")
+        return s
+
+    def session_still(self, s, filename, caption, label_text, kind, **kw):
+        img, _, _ = render_scene(1024, 768, random.uniform(0, 360), 0, label=label_text, cam=self.camera)
+        web = jpeg(img.resize((2400, 1800), Image.LANCZOS), 85)
+        m = {"filename": filename, "kind": kind, "setLabel": kw.get("set_label"), "view": kw.get("view"),
+             "label": kw.get("label"), "caption": caption, "nominalDeg": kw.get("nominal"), "actualDeg": kw.get("actual"),
+             "takenAt": now_iso(), "ready": True, "original": None, "durationMs": None,
+             "web": {"mime": "image/jpeg", "bytes": len(web), "width": 2400, "height": 1800, "filename": filename},
+             "_data": {"web": web, "thumb": jpeg(img.resize((320, 240), Image.LANCZOS), 75)}, "_t": time.monotonic()}
+        self.session_put(s, m)
+
+    def session_put(self, s, m):
+        """Adds a file to a session, replacing one with the same name, and tells every tab."""
+        with self.lock:
+            s["media"] = [x for x in s["media"] if x["filename"] != m["filename"]] + [m]
+            s["updatedAt"] = now_iso()
+        self.broadcast({"type": "session", "session": self.session_summary(s)})
+
+    def session_summary(self, s):
+        job = self.job
+        media = [m for m in s["media"] if m["ready"]]
+        cover = next((m["filename"] for m in media if m["filename"] == "front.jpg"), None) or \
+            next((m["filename"] for m in media if m["kind"] != "spin"), None)
+        return {"id": s["id"], "name": s["name"], "createdAt": s["createdAt"], "updatedAt": s["updatedAt"],
+                "open": self.target["kind"] == "session" and self.target["sessionId"] == s["id"],
+                "busy": bool(job and job.target.get("sessionId") == s["id"]),
+                "hasNotes": bool(s["notes"].strip()), "mediaCount": len(media),
+                "bytes": session_bytes(s), "cover": cover}
+
+    def session_detail(self, s):
+        out = self.session_summary(s)
+        out["notes"] = s["notes"]
+        media = [m for m in s["media"] if m["ready"]]
+        out["media"] = [public_shot(m) for m in sorted(media, key=lambda m: media_order_key(m, media))]
+        return out
+
+    def get_session(self, sid):
+        s = self.sessions.get(sid)
+        if not s:
+            raise ApiError(404, "not_found", "No such session.")
+        return s
+
+    def check_not_writing(self, sid):
+        if self.job and self.job.target.get("sessionId") == sid:
+            raise self.busy()
+
+    def delete_session(self, sid):
+        with self.lock:
+            s = self.get_session(sid)
+            self.check_not_writing(sid)
+            if self.target["kind"] == "session" and self.target["sessionId"] == sid:
+                raise ApiError(409, "session_open", "%s is open on the phone. Close it there first." % s["name"],
+                               sessionId=sid)
+            del self.sessions[sid]
+        self.broadcast({"type": "session_removed", "id": sid})
+
+    def delete_session_file(self, sid, filename):
+        with self.lock:
+            s = self.get_session(sid)
+            if not any(m["filename"] == filename for m in s["media"]):
+                raise ApiError(404, "not_found", "That session has no such file.")
+            self.check_not_writing(sid)
+            s["media"] = [m for m in s["media"] if m["filename"] != filename]
+            s["updatedAt"] = now_iso()
+        self.broadcast({"type": "session", "session": self.session_summary(s)})
 
     # -- motion -------------------------------------------------------------
 
@@ -975,7 +1137,8 @@ class Phone:
         job.step(1, 1, "Capturing %s…" % label)
         self.countdown(job, job.params["delayMs"])
         with self.lock:
-            taken = {s["filename"] for s in self.shots.values()}
+            s = self.sessions.get(job.target.get("sessionId")) if job.target["kind"] == "session" else None
+            taken = {m["filename"] for m in s["media"]} if s else {x["filename"] for x in self.shots.values()}
         base = kebab(label) or "extra"
         name = base + ".jpg"
         n = 2
@@ -999,6 +1162,23 @@ class Phone:
         return shot
 
     def _store_shot(self, job, shot):
+        if job.target["kind"] == "session":
+            # Into the session instead: no shot ID, the job lists the file name.
+            s = self.sessions.get(job.target["sessionId"])
+            if s is None:
+                raise ApiError(500, "internal", "The session was deleted.")
+            for k in ("id", "jobId"):
+                shot.pop(k, None)
+            shot["_session"] = s["id"]
+            if shot["ready"]:
+                self.session_put(s, shot)
+            else:
+                with self.lock:  # a spin joins its session once it's encoded
+                    s["media"] = [x for x in s["media"] if x["filename"] != shot["filename"]] + [shot]
+            if shot["filename"] not in job.filenames:
+                job.filenames.append(shot["filename"])
+            self.push_job(job)
+            return
         replaced = []
         with self.lock:
             if shot["kind"] != "extra":
@@ -1017,13 +1197,11 @@ class Phone:
         shot = self._new_shot(job, kind, filename, caption, **kw)
         img, _, _ = render_scene(2048, 1536, self.table.angle(), self.zero(), label=label_text, cam=self.camera,
                                  ring_visible=self.ring_ok())
+        # Only the web copy is kept (Spec.md, Output): original stays null.
         web = img.resize((2400, 1800), Image.LANCZOS)
-        orig = img.resize((4096, 3072), Image.BICUBIC)
         thumb = img.resize((320, 240), Image.LANCZOS)
-        shot["_data"] = {"web": jpeg(web, 85), "original": jpeg(orig, 95), "thumb": jpeg(thumb, 75)}
+        shot["_data"] = {"web": jpeg(web, 85), "thumb": jpeg(thumb, 75)}
         shot["web"] = {"mime": "image/jpeg", "bytes": len(shot["_data"]["web"]), "width": 2400, "height": 1800, "filename": filename}
-        shot["original"] = {"mime": "image/jpeg", "bytes": len(shot["_data"]["original"]), "width": 4096, "height": 3072,
-                            "filename": filename}
         self._store_shot(job, shot)
 
     def add_spin(self, job, prefix, set_label):
@@ -1034,8 +1212,6 @@ class Phone:
         shot["_data"] = {"thumb": jpeg(img, 75)}
         shot["ready"] = False
         shot["web"] = {"mime": "video/mp4", "bytes": 0, "width": 640, "height": 480, "filename": filename}
-        shot["original"] = {"mime": "video/mp4", "bytes": 0, "width": 640, "height": 480,
-                            "filename": prefix + "spin-source.mp4"}
         shot["durationMs"] = 3000
         self._store_shot(job, shot)
         threading.Thread(target=self._encode_spin, args=(shot,), daemon=True).start()
@@ -1070,14 +1246,19 @@ class Phone:
         if data is None:
             self.broadcast({"type": "notice", "level": "warn", "text": "Mock: no ffmpeg, so the spin video is empty."})
             data = b""
+        sid = shot.get("_session")
         with self.lock:
-            if shot["id"] not in self.shots:
+            if sid is None and shot.get("id") not in self.shots:
+                return
+            if sid is not None and sid not in self.sessions:
                 return
             shot["_data"]["web"] = data
-            shot["_data"]["original"] = data
-            shot["web"]["bytes"] = shot["original"]["bytes"] = len(data)
+            shot["web"]["bytes"] = len(data)
             shot["ready"] = True
-        self.broadcast({"type": "shot", "shot": public_shot(shot)})
+        if sid is not None:
+            self.session_put(self.sessions[sid], shot)
+        else:
+            self.broadcast({"type": "shot", "shot": public_shot(shot)})
 
     def ordered_shots(self):
         def key(s):
@@ -1187,6 +1368,24 @@ class Phone:
 
 def public_shot(s):
     return {k: v for k, v in s.items() if not k.startswith("_")}
+
+
+def session_bytes(s):
+    return sum(m["web"]["bytes"] for m in s["media"] if m["ready"])
+
+
+def media_order_key(m, media):
+    """The standard order: main views, main spin, extra sets as first shot, then extra shots by time."""
+    sets = []
+    for x in sorted(media, key=lambda x: x["_t"]):
+        if x["setLabel"] and x["setLabel"] not in sets:
+            sets.append(x["setLabel"])
+    view_i = {v[1]: i for i, v in enumerate(VIEWS)}.get(m["view"], 4)
+    if m["kind"] == "extra":
+        return (2, 0, 0, m["_t"])
+    if m["setLabel"]:
+        return (1, sets.index(m["setLabel"]), view_i, m["_t"])
+    return (0, 0, view_i, m["_t"])
 
 
 def local_addresses():
@@ -1366,6 +1565,57 @@ class ApiHandler(BaseHTTPRequestHandler):
 
         if path == "/api/status" and method == "GET":
             return 200, P.status()
+        # The camera, ring and turntable moves need the phone's Capture screen open.
+        if path in ("/api/camera", "/api/camera/focus", "/api/turntable/move", "/api/turntable/front",
+                    "/api/calibrate", "/api/capture", "/api/extra") and method in ("GET", "POST"):
+            P.require_camera()
+        if path == "/api/camera/open" and method == "POST":
+            return 200, P.open_camera()
+        if path == "/api/target":
+            if method == "GET":
+                return 200, {"target": dict(P.target)}
+            if method == "POST":
+                if body.get("session"):
+                    s = P.get_session(str(body["session"]))
+                    return 200, {"target": P.set_target({"kind": "session", "sessionId": s["id"], "name": s["name"]}, "editor")}
+                if body.get("shots") is True:
+                    return 200, {"target": P.set_target({"kind": "shots"}, "editor")}
+                raise ApiError(400, "bad_request", "Give session (an ID to join) or shots: true (a new set).", field="session")
+        if path == "/api/sessions" and method == "GET":
+            with P.lock:
+                sessions = sorted(P.sessions.values(), key=lambda s: s["createdAt"], reverse=True)
+            return 200, {"sessions": [P.session_summary(s) for s in sessions]}
+        sm = re.fullmatch(r"/api/sessions/([^/]+)(?:/media/([^/]+))?", path)
+        if sm:
+            s = P.get_session(sm.group(1))
+            filename = unquote(sm.group(2)) if sm.group(2) else None
+            if filename is None:
+                if method == "GET":
+                    return 200, P.session_detail(s)
+                if method == "DELETE":
+                    P.delete_session(s["id"])
+                    return 204, None
+            else:
+                if method == "DELETE":
+                    P.delete_session_file(s["id"], filename)
+                    return 204, None
+                if method == "GET":
+                    m = next((x for x in s["media"] if x["filename"] == filename and x["ready"]), None)
+                    if not m:
+                        raise ApiError(404, "not_found", "That session has no such file.")
+                    variant = (query.get("variant") or ["web"])[0]
+                    if variant == "original":
+                        raise ApiError(404, "not_found", "The phone keeps only the web copy.")
+                    if variant not in ("web", "thumb"):
+                        raise ApiError(400, "bad_request", "variant is web or thumb.", field="variant")
+                    if variant == "thumb":
+                        data = m["_data"].get("thumb", b"")
+                        mime, name = "image/jpeg", filename.rsplit(".", 1)[0] + "-thumb.jpg"
+                    else:
+                        data, mime, name = m["_data"].get("web", b""), m["web"]["mime"], filename
+                    return 200, (data, mime, {"Content-Disposition": 'attachment; filename="%s"' % name,
+                                              "X-Shot-Filename": name})
+            raise ApiError(405, "method_not_allowed", "%s isn't allowed here." % method)
         if path == "/api/camera":
             if method == "GET":
                 return 200, {"capabilities": P.capabilities(), "settings": dict(P.camera)}
@@ -1373,7 +1623,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                 return 200, P.set_camera(body)
         if path == "/api/camera/focus" and method == "POST":
             if P.job and P.job.kind != "move":
-                raise ApiError(409, "busy", "%s is running." % P.job.kind.capitalize(), jobId=P.job.id)
+                raise P.busy()
             if body.get("clear") is True:
                 point = None
             else:
@@ -1395,7 +1645,7 @@ class ApiHandler(BaseHTTPRequestHandler):
             if role not in JAYEGT_ROLES:
                 raise ApiError(422, "unsupported", "This turntable's remote has no %s button." % role, field="role")
             if P.job:
-                raise ApiError(409, "busy", "%s is running." % P.job.kind.capitalize(), jobId=P.job.id)
+                raise P.busy()
             P.table.press(role)
             return 200, {"role": role}
         if path == "/api/turntable/move" and method == "POST":
@@ -1423,10 +1673,11 @@ class ApiHandler(BaseHTTPRequestHandler):
             if not params["stills"] and not params["video"]:
                 raise ApiError(400, "bad_request", "Ask for the stills, the spin or both.", field="stills")
             if P.job:
-                raise ApiError(409, "busy", "%s is running." % P.job.kind.capitalize(), jobId=P.job.id)
+                raise P.busy()
             if params["auto"] and not P.calibration:
                 raise ApiError(409, "not_calibrated", "Calibrate the turntable before an auto capture, or use manual mode.")
-            return 202, {"job": P.start_job("capture", params, P.job_capture).to_json()}
+            target = P.target_for("editor")
+            return 202, {"job": P.start_job("capture", params, P.job_capture, target).to_json()}
         if path == "/api/extra" and method == "POST":
             label = str(body.get("label") or "").strip()
             if not 1 <= len(label) <= 60:
@@ -1434,15 +1685,18 @@ class ApiHandler(BaseHTTPRequestHandler):
             delay = body.get("delayMs", 2000)
             if not isinstance(delay, int) or not 0 <= delay <= 10000:
                 raise ApiError(400, "bad_request", "delayMs must be 0 to 10000.", field="delayMs")
-            return 202, {"job": P.start_job("extra", {"label": label, "delayMs": delay}, P.job_extra).to_json()}
+            if P.job:
+                raise P.busy()
+            target = P.target_for("editor")
+            return 202, {"job": P.start_job("extra", {"label": label, "delayMs": delay}, P.job_extra, target).to_json()}
         if path == "/api/jobs/current":
             if method == "GET":
                 j = P.job or P.last_job
                 return 200, {"job": j.to_json() if j else None}
             if method == "DELETE":
-                return 200, {"job": P.abort().to_json()}
+                return 200, {"job": P.abort("editor").to_json()}
         if path == "/api/jobs/current/answer" and method == "POST":
-            return 200, {"job": P.answer(body).to_json()}
+            return 200, {"job": P.answer(body, "editor").to_json()}
         if path == "/api/shots":
             if method == "GET":
                 return 200, {"shots": [public_shot(s) for s in P.ordered_shots()]}
@@ -1459,22 +1713,24 @@ class ApiHandler(BaseHTTPRequestHandler):
                 if not s:
                     raise ApiError(404, "not_found", "No such shot.")
                 variant = (query.get("variant") or ["web"])[0]
-                if variant not in ("web", "original", "thumb"):
-                    raise ApiError(400, "bad_request", "variant is web, original or thumb.", field="variant")
+                if variant == "original":
+                    raise ApiError(404, "not_found", "The phone keeps only the web copy.")
+                if variant not in ("web", "thumb"):
+                    raise ApiError(400, "bad_request", "variant is web or thumb.", field="variant")
                 if variant != "thumb" and not s["ready"]:
                     raise ApiError(409, "not_ready", "The spin video is still being encoded.")
                 data = s["_data"].get(variant, b"")
                 if variant == "thumb":
                     mime, name = "image/jpeg", s["filename"].rsplit(".", 1)[0] + "-thumb.jpg"
                 else:
-                    mime, name = s[variant]["mime"], s[variant]["filename"]
+                    mime, name = s["web"]["mime"], s["web"]["filename"]
                 return 200, (data, mime, {"Content-Disposition": 'attachment; filename="%s"' % name,
                                           "X-Shot-Filename": name})
         if path == "/api/session.json" and method == "GET":
             return 200, P.session_json()
-        known = {"/api/status", "/api/camera", "/api/camera/focus", "/api/turntable/press", "/api/turntable/move",
+        known = {"/api/status", "/api/camera", "/api/camera/focus", "/api/camera/open", "/api/turntable/press", "/api/turntable/move",
                  "/api/turntable/front", "/api/calibrate", "/api/capture", "/api/extra", "/api/jobs/current", "/api/jobs/current/answer",
-                 "/api/shots", "/api/session.json"}
+                 "/api/shots", "/api/session.json", "/api/target", "/api/sessions"}
         if path in known or m:
             raise ApiError(405, "method_not_allowed", "%s isn't allowed here." % method)
         raise ApiError(404, "not_found", "No such endpoint.")
@@ -1567,7 +1823,28 @@ class ApiHandler(BaseHTTPRequestHandler):
             P.fail_moves.add(P.move_n + int(q.get("n", "1")))
         elif path == "/mock/answer" and P.job and P.job.prompt:
             try:
-                P.answer({"promptId": P.job.prompt["id"], "answer": q.get("answer")})
+                P.answer({"promptId": P.job.prompt["id"], "answer": q.get("answer")}, "phone")
+            except ApiError as e:
+                return self.send_json(e.status, e.body(), cors=False)
+        elif path == "/mock/camera":
+            # The user opens (open=1) or leaves (open=0) the Capture screen on the phone.
+            P.camera_open = q.get("open", "1") == "1"
+            if not P.camera_open and P.job:
+                P.abort("phone")
+            P.push_status()
+        elif path in ("/mock/session", "/mock/open", "/mock/close"):
+            # The user at the phone: makes a session (name=, open=1 to open it), opens one
+            # (id=), or closes the open one.
+            try:
+                if path == "/mock/session":
+                    s = P.mock_session(q.get("name") or "Mock badge", q.get("notes", "Made by the mock phone."))
+                    if q.get("open", "1") == "1":
+                        P.set_target({"kind": "session", "sessionId": s["id"], "name": s["name"]}, "phone")
+                elif path == "/mock/open":
+                    s = P.get_session(q.get("id", ""))
+                    P.set_target({"kind": "session", "sessionId": s["id"], "name": s["name"]}, "phone")
+                else:
+                    P.set_target({"kind": "none"}, "phone")
             except ApiError as e:
                 return self.send_json(e.status, e.body(), cors=False)
         elif path == "/mock/offline":
@@ -1588,13 +1865,21 @@ class ApiHandler(BaseHTTPRequestHandler):
                 ids = list(P.shots)
                 P.shots.clear()
                 P.set_order.clear()
+                session_ids = list(P.sessions)
+                P.sessions.clear()
+                P.target = {"kind": "none", "sessionId": None, "name": None, "setBy": None, "editorJoined": False}
+                P.camera_open = not P.args.camera_closed
             for sid in ids:
                 P.broadcast({"type": "shot_removed", "id": sid})
+            for sid in session_ids:
+                P.broadcast({"type": "session_removed", "id": sid})
             for c in list(P.clients):
                 c.close(4401, "reset")
         state = {"code": P.code, "offlineMs": max(0, round((P.offline_until - time.monotonic()) * 1000)),
                  "ringBlocked": P.ring_blocked, "calibrated": bool(P.calibration),
                  "tokens": len(P.tokens), "job": (P.job or P.last_job).to_json() if (P.job or P.last_job) else None,
+                 "cameraOpen": P.camera_open, "target": dict(P.target),
+                 "sessions": [{"id": s["id"], "name": s["name"]} for s in P.sessions.values()],
                  "pendingMoveFailures": sorted(P.fail_moves)}
         self.send_json(200, state, cors=False)
 
@@ -1667,6 +1952,8 @@ def main():
     ap.add_argument("--fail-move", type=int, action="append", help="make the Nth closed-loop move fail (repeatable)")
     ap.add_argument("--ring-blocked", action="store_true", help="start with the ring hidden")
     ap.add_argument("--rotate", type=int, default=1, help="preview header rotation, 0-3 (default 1, to test it)")
+    ap.add_argument("--sessions", type=int, default=0, help="start with N sessions on the phone, the last one open")
+    ap.add_argument("--camera-closed", action="store_true", help="start off the Camera screen (camera endpoints 503)")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
     if args.code and not re.fullmatch(r"\d{6}", args.code):

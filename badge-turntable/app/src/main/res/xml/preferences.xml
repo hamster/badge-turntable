@@ -14,17 +14,6 @@
     <!-- One row per paired PC, filled in by SettingsActivity. -->
     <PreferenceCategory app:key="remote_paired" app:title="@string/cat_remote_paired" />
 
-    <PreferenceCategory app:title="@string/cat_samba">
-        <EditTextPreference app:key="smb_host" app:title="@string/smb_host" app:useSimpleSummaryProvider="true" />
-        <EditTextPreference app:key="smb_port" app:title="@string/smb_port" app:defaultValue="445" app:useSimpleSummaryProvider="true" />
-        <EditTextPreference app:key="smb_share" app:title="@string/smb_share" app:useSimpleSummaryProvider="true" />
-        <EditTextPreference app:key="smb_path" app:title="@string/smb_path" app:useSimpleSummaryProvider="true" />
-        <EditTextPreference app:key="smb_domain" app:title="@string/smb_domain" app:useSimpleSummaryProvider="true" />
-        <EditTextPreference app:key="smb_user" app:title="@string/smb_user" app:useSimpleSummaryProvider="true" />
-        <EditTextPreference app:key="smb_password_input" app:title="@string/smb_password" app:persistent="false" />
-        <Preference app:key="smb_test" app:title="@string/smb_test" />
-    </PreferenceCategory>
-
     <PreferenceCategory app:title="@string/cat_turntable">
         <ListPreference
             app:key="turntable_model"
@@ -70,14 +59,6 @@
             app:defaultValue="2000"
             app:useSimpleSummaryProvider="true" />
         <EditTextPreference app:key="video_overlap_deg" app:title="@string/video_overlap" app:defaultValue="15" app:useSimpleSummaryProvider="true" />
-    </PreferenceCategory>
-
-    <PreferenceCategory app:title="@string/cat_badge_ids">
-        <EditTextPreference
-            app:key="badge_ids_url"
-            app:title="@string/badge_ids_url"
-            app:defaultValue="https://hamster.github.io/badges/badge-ids.json"
-            app:useSimpleSummaryProvider="true" />
     </PreferenceCategory>
 
     <PreferenceCategory app:title="@string/cat_device">

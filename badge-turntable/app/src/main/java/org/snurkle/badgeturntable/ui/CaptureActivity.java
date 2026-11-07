@@ -1,6 +1,7 @@
 package org.snurkle.badgeturntable.ui;
 
 import android.Manifest;
+import android.content.Intent;
 import android.annotation.SuppressLint;
 import android.content.pm.PackageManager;
 import android.hardware.display.DisplayManager;
@@ -26,19 +27,18 @@ import androidx.core.content.ContextCompat;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.materialswitch.MaterialSwitch;
 
+import org.snurkle.badgeturntable.App;
 import org.snurkle.badgeturntable.R;
 import org.snurkle.badgeturntable.camera.CameraController;
 import org.snurkle.badgeturntable.camera.CameraSettings;
-import org.snurkle.badgeturntable.capture.CaptureTarget;
-import org.snurkle.badgeturntable.capture.SessionTarget;
 import org.snurkle.badgeturntable.jobs.ApiException;
 import org.snurkle.badgeturntable.jobs.Job;
 import org.snurkle.badgeturntable.jobs.JobRunner;
 import org.snurkle.badgeturntable.remote.RemoteServer;
 import org.snurkle.badgeturntable.rig.Rig;
+import org.snurkle.badgeturntable.rig.Station;
 import org.snurkle.badgeturntable.ring.RingReading;
 import org.snurkle.badgeturntable.session.Session;
-import org.snurkle.badgeturntable.session.SessionStore;
 
 import java.util.List;
 import java.util.Locale;
@@ -48,29 +48,30 @@ import java.util.function.Consumer;
 
 /**
  * Live preview, camera controls, turntable status and the Capture / Extra shot / Calibrate
- * buttons. Opened for a badge session, or on its own (setup mode) to frame the light box,
- * calibrate, and take shots for the editor. Everything that uses the camera or turntable
- * is a job on the {@link Rig}, so the phone and the editor see the same progress and
- * prompts. While this screen is visible and Settings → Remote control is on, it also runs
- * the {@link RemoteServer}.
+ * buttons. Captures go into the Station's target, shown on the target button: a session,
+ * or the shots for the editor. With none, Capture opens the session picker (Spec.md, The
+ * open session). Everything that uses the camera or turntable is a job on the {@link Rig},
+ * so the phone and the editor see the same progress and prompts. While this screen is
+ * started, its rig is attached to the {@link Station}, so the editor gets its camera.
  */
-public final class CaptureActivity extends AppCompatActivity implements JobRunner.Listener, RemoteServer.Listener {
+public final class CaptureActivity extends AppCompatActivity implements JobRunner.Listener, Station.Listener {
     private static final String[] EXTRA_LABELS = {"Lanyard", "Add-ons installed", "Detail", "Lit up", "Packaging"};
     /** Per-frame ring trace. Off by default: adb shell setprop log.tag.RingTrace DEBUG */
     private static final String RING_TRACE = "RingTrace";
 
     private final ExecutorService io = Executors.newSingleThreadExecutor();
-    private SessionStore store;
-    /** Null in setup mode (no badge). */
-    private Session session;
+    private Station station;
     private Rig rig;
-    private RemoteServer remote;
+    private RemoteBanner banner;
+    /** The target last shown, to tell the user when the editor changes it. */
+    private Station.Target shownTarget;
+    private int shownClients;
 
     private PreviewView preview;
     private FramingOverlay overlay;
     private TextView status, ringText, remoteText;
     private MaterialSwitch autoSwitch;
-    private Button captureButton, extraButton, calibrateButton, wbButton, lensButton, zoomButton;
+    private Button captureButton, extraButton, calibrateButton, wbButton, lensButton, zoomButton, targetButton;
     private ScaleGestureDetector pinch;
     private GestureDetector taps;
     private AlertDialog promptDialog;
@@ -105,8 +106,8 @@ public final class CaptureActivity extends AppCompatActivity implements JobRunne
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_capture);
-        store = new SessionStore(this);
-        rig = new Rig(this);
+        station = App.station(this);
+        rig = new Rig(this, station);
 
         preview = findViewById(R.id.preview);
         overlay = findViewById(R.id.overlay);
@@ -120,6 +121,9 @@ public final class CaptureActivity extends AppCompatActivity implements JobRunne
         status = findViewById(R.id.status);
         ringText = findViewById(R.id.ring);
         remoteText = findViewById(R.id.remote);
+        banner = new RemoteBanner(this, remoteText);
+        targetButton = findViewById(R.id.target);
+        targetButton.setOnClickListener(v -> SessionPicker.show(this, station, io));
         autoSwitch = findViewById(R.id.auto);
         captureButton = findViewById(R.id.capture);
         extraButton = findViewById(R.id.extra);
@@ -169,31 +173,31 @@ public final class CaptureActivity extends AppCompatActivity implements JobRunne
         showCamera(rig.camera.settings());
         autoSwitch.setChecked(rig.table != null);
 
-        String id = getIntent().getStringExtra(SessionEditActivity.EXTRA_ID);
-        if (id == null) {
-            setTitle(R.string.camera_setup);
-            updateButtons();
-        } else {
-            io.execute(() -> {
-                Session s = store.get(id);
-                runOnUiThread(() -> {
-                    if (s == null) {
-                        finish();
-                        return;
-                    }
-                    session = s;
-                    setTitle(s.title);
-                    autoSwitch.setChecked(s.autoMode && rig.table != null);
-                    updateButtons();
-                });
-            });
-        }
+        openFromIntent(getIntent());
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
             startCamera();
         } else {
             cameraPermission.launch(Manifest.permission.CAMERA);
         }
+    }
+
+    /** Open camera on a session (EXTRA_ID) opens it here; without one, the target stays as it was. */
+    private void openFromIntent(Intent intent) {
+        String id = intent == null ? null : intent.getStringExtra(SessionEditActivity.EXTRA_ID);
+        if (id == null) return;
+        intent.removeExtra(SessionEditActivity.EXTRA_ID);  // not again on a recreate
+        try {
+            station.openSession(id, Job.PHONE);
+        } catch (ApiException e) {
+            Toast.makeText(this, e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    @Override
+    protected void onNewIntent(@NonNull Intent intent) {
+        super.onNewIntent(intent);
+        openFromIntent(intent);
     }
 
     private void startCamera() {
@@ -203,13 +207,14 @@ public final class CaptureActivity extends AppCompatActivity implements JobRunne
     @Override
     protected void onStart() {
         super.onStart();
-        if (RemoteServer.enabled(this)) {
-            remote = new RemoteServer(this, rig, this);
-            remote.start();
-        }
+        station.attach(rig);
+        station.addListener(this);
+        banner.start();
+        shownTarget = station.target();
+        shownClients = clientCount();
+        showTarget();
         updateButtons();
-        onRemoteChanged();
-        if (rig.jobs.current() == null) status.setText(canCapture() ? "" : getString(R.string.setup_mode));
+        if (rig.jobs.current() == null) status.setText(station.target().isNone() ? getString(R.string.setup_mode) : "");
         getSystemService(DisplayManager.class).registerDisplayListener(displayListener, null);
         onRotation();
     }
@@ -231,15 +236,10 @@ public final class CaptureActivity extends AppCompatActivity implements JobRunne
     @Override
     protected void onStop() {
         getSystemService(DisplayManager.class).unregisterDisplayListener(displayListener);
-        // The camera needs the app in the foreground: a job can't carry on in the background.
-        if (rig.jobs.current() != null) {
-            try {
-                rig.jobs.abort();
-            } catch (ApiException ignored) {
-            }
-        }
-        if (remote != null) remote.stop();
-        remote = null;
+        banner.stop();
+        station.removeListener(this);
+        // The camera goes with this screen, so a running job is stopped (keeping what it took).
+        station.detach(rig);
         super.onStop();
     }
 
@@ -320,18 +320,10 @@ public final class CaptureActivity extends AppCompatActivity implements JobRunne
 
     // ---- Buttons -------------------------------------------------------------------
 
-    /** Where the phone's own captures go: the badge, or (setup mode) the shots for the editor. */
-    private CaptureTarget target() {
-        return session != null ? new SessionTarget(store, session) : null;
-    }
-
-    /**
-     * The phone's own Capture and Extra shot need a badge session. Setup mode only previews and
-     * calibrates; the editor can still take shots there through the remote API, and the phone
-     * keeps Ready and Stop for those jobs.
-     */
-    private boolean canCapture() {
-        return session != null;
+    /** The open session, for its options; null for the editor's shots or none. Main thread, small read. */
+    private Session openSession() {
+        Station.Target t = station.target();
+        return t.isSession() ? station.sessions.get(t.sessionId) : null;
     }
 
     private void onCapture() {
@@ -341,9 +333,21 @@ public final class CaptureActivity extends AppCompatActivity implements JobRunne
             if (p != null && "position".equals(p.kind)) answer(p, "ready");
             return;
         }
-        if (!canCapture()) return;
+        // No session open: pick one. Picking only opens it; the next Capture starts.
+        if (station.target().isNone()) {
+            SessionPicker.show(this, station, io);
+            return;
+        }
         boolean auto = autoSwitch.isChecked() && rig.table != null;
-        if (session != null) session.autoMode = auto;
+        Station.Target t = station.target();
+        if (t.isSession()) {
+            io.execute(() -> {
+                try {
+                    station.sessions.update(t.sessionId, s -> s.autoMode = auto);
+                } catch (java.io.IOException ignored) {
+                }
+            });
+        }
         if (auto && (!rig.calibrated() || !rig.ring.latest().ok())) {
             new MaterialAlertDialogBuilder(this)
                     .setTitle(R.string.calibrate_first_title)
@@ -362,9 +366,10 @@ public final class CaptureActivity extends AppCompatActivity implements JobRunne
 
     /** setLabel is null for the main set. */
     private void startCapture(boolean auto, String setLabel) {
-        boolean video = session == null || session.captureVideo;
+        Session s = openSession();
+        boolean video = s == null || s.captureVideo;
         try {
-            rig.startCapture(target(), auto, true, video, setLabel);
+            rig.startCapture(Job.PHONE, auto, true, video, setLabel);
         } catch (ApiException e) {
             Toast.makeText(this, e.getMessage(), Toast.LENGTH_LONG).show();
         }
@@ -383,7 +388,10 @@ public final class CaptureActivity extends AppCompatActivity implements JobRunne
             }
             return;
         }
-        if (!canCapture()) return;
+        if (station.target().isNone()) {
+            SessionPicker.show(this, station, io);
+            return;
+        }
         String[] items = new String[EXTRA_LABELS.length + 2];
         System.arraycopy(EXTRA_LABELS, 0, items, 0, EXTRA_LABELS.length);
         items[EXTRA_LABELS.length] = getString(R.string.extra_other);
@@ -416,7 +424,7 @@ public final class CaptureActivity extends AppCompatActivity implements JobRunne
 
     private void captureExtra(String label) {
         try {
-            rig.startExtra(target(), label, Rig.parseInt(rig.prefs.getString("manual_delay_ms", "2000"), 2000));
+            rig.startExtra(Job.PHONE, label, Rig.parseInt(rig.prefs.getString("manual_delay_ms", "2000"), 2000));
         } catch (ApiException e) {
             Toast.makeText(this, e.getMessage(), Toast.LENGTH_LONG).show();
         }
@@ -424,7 +432,7 @@ public final class CaptureActivity extends AppCompatActivity implements JobRunne
 
     private void onCalibrate() {
         try {
-            rig.startCalibrate();
+            rig.startCalibrate(Job.PHONE);
         } catch (ApiException e) {
             Toast.makeText(this, e.getMessage(), Toast.LENGTH_LONG).show();
         }
@@ -447,6 +455,7 @@ public final class CaptureActivity extends AppCompatActivity implements JobRunne
 
     private void showJob(Job job) {
         if (isFinishing() || isDestroyed()) return;
+        boolean editor = Job.EDITOR.equals(job.source);
         if (job.finished()) {
             switch (job.state()) {
                 case DONE: status.setText(job.text()); break;
@@ -456,7 +465,9 @@ public final class CaptureActivity extends AppCompatActivity implements JobRunne
             }
         } else {
             Job.Prompt p = job.prompt();
-            status.setText(p != null ? p.text : job.text());
+            // An editor job says so, so the person at the phone knows why the buttons changed.
+            String text = p != null ? p.text : job.text();
+            status.setText(editor && p == null ? job.describe() + ": " + text : text);
         }
         showPrompt(job.finished() ? null : job.prompt());
         updateButtons();
@@ -485,45 +496,60 @@ public final class CaptureActivity extends AppCompatActivity implements JobRunne
         boolean busy = job != null;
         Job.Prompt p = busy ? job.prompt() : null;
         boolean ready = p != null && "position".equals(p.kind);
-        boolean capture = canCapture();
 
         captureButton.setText(ready ? R.string.ready : R.string.capture);
-        captureButton.setEnabled(busy ? ready : capture);
-        captureButton.setVisibility(capture || ready ? android.view.View.VISIBLE : android.view.View.GONE);
+        captureButton.setEnabled(!busy || ready);
         extraButton.setText(busy ? R.string.stop : R.string.extra_shot);
-        extraButton.setVisibility(capture || busy ? android.view.View.VISIBLE : android.view.View.GONE);
         calibrateButton.setEnabled(!busy && rig.table != null);
         findViewById(R.id.set_front).setEnabled(!busy);
         autoSwitch.setEnabled(!busy && rig.table != null);
+        targetButton.setEnabled(!busy);
     }
 
-    // ---- Remote control (from any thread) ----------------------------------------------
+    // ---- The target and the editor (from any thread) -----------------------------------
 
     @Override
-    public void onRemoteChanged() {
-        runOnUiThread(this::showRemote);
+    public void onStationChanged() {
+        runOnUiThread(() -> {
+            if (isFinishing() || isDestroyed()) return;
+            Station.Target t = station.target();
+            Station.Target was = shownTarget;
+            shownTarget = t;
+            int clients = clientCount();
+            boolean moved = was != null && (!t.kind.equals(was.kind) || !java.util.Objects.equals(t.sessionId, was.sessionId)
+                    || t.editorJoined != was.editorJoined);
+            if (moved && Job.EDITOR.equals(t.setBy)) {
+                // The editor joined the open session, or started a new set (the session is saved).
+                String msg = t.isSession() ? getString(R.string.target_editor_joined, t.name)
+                        : was.isSession() ? getString(R.string.target_editor_new, was.name)
+                        : getString(R.string.target_editor_new_plain);
+                Toast.makeText(this, msg, Toast.LENGTH_LONG).show();
+            } else if (clients > shownClients && t.isSession() && !t.editorJoined) {
+                Toast.makeText(this, getString(R.string.target_editor_connected, t.name), Toast.LENGTH_LONG).show();
+            }
+            shownClients = clients;
+            showTarget();
+            updateButtons();
+        });
     }
 
-    private void showRemote() {
-        RemoteServer r = remote;
-        if (r == null) {
-            remoteText.setVisibility(android.view.View.GONE);
-            return;
+    private int clientCount() {
+        RemoteServer r = station.server();
+        return r == null ? 0 : r.clientNames().size();
+    }
+
+    private void showTarget() {
+        Station.Target t = station.target();
+        targetButton.setText(t.isSession() ? getString(R.string.target_session, t.name)
+                : t.isShots() ? getString(R.string.target_shots) : getString(R.string.target_none));
+        setTitle(t.isSession() ? t.name : getString(R.string.camera_setup));
+        if (t.isSession()) {
+            io.execute(() -> {
+                Session s = openSession();
+                if (s != null) runOnUiThread(() -> autoSwitch.setChecked(s.autoMode && rig.table != null));
+            });
         }
-        remoteText.setVisibility(android.view.View.VISIBLE);
-        if (!r.running()) {
-            remoteText.setText(r.error());
-            return;
-        }
-        List<String> addresses = RemoteServer.addresses();
-        String code = r.code();
-        StringBuilder text = new StringBuilder(getString(R.string.remote_banner, r.name(),
-                addresses.isEmpty() ? getString(R.string.remote_no_wifi) : addresses.get(0) + ":" + r.port(),
-                code.substring(0, 3) + " " + code.substring(3)));
-        List<String> clients = r.clientNames();
-        if (!clients.isEmpty()) text.append(" · ").append(getString(R.string.remote_controlled_from, String.join(", ", clients)));
-        remoteText.setText(text);
-        updateButtons();
+        if (rig.jobs.current() == null) status.setText(t.isNone() ? getString(R.string.setup_mode) : "");
     }
 
     @Override

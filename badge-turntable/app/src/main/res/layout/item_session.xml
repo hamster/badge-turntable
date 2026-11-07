@@ -35,20 +35,4 @@
             android:layout_height="wrap_content"
             android:textAppearance="?attr/textAppearanceBodyMedium" />
     </LinearLayout>
-
-    <!-- Sync status and button: only when Samba is set up in Settings -->
-    <TextView
-        android:id="@+id/status"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:textAppearance="?attr/textAppearanceLabelMedium"
-        tools:text="Not synced" />
-
-    <Button
-        android:id="@+id/sync"
-        style="?attr/materialButtonOutlinedStyle"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginStart="12dp"
-        android:text="@string/sync" />
 </LinearLayout>

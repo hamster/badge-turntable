@@ -10,32 +10,33 @@ import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
-import androidx.work.WorkManager;
 
 import com.google.android.material.appbar.MaterialToolbar;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
+import org.snurkle.badgeturntable.App;
 import org.snurkle.badgeturntable.R;
+import org.snurkle.badgeturntable.jobs.ApiException;
+import org.snurkle.badgeturntable.jobs.Job;
 import org.snurkle.badgeturntable.remote.RemoteServer;
+import org.snurkle.badgeturntable.rig.Station;
 import org.snurkle.badgeturntable.session.Session;
 import org.snurkle.badgeturntable.session.SessionStore;
-import org.snurkle.badgeturntable.sync.SmbSettings;
-import org.snurkle.badgeturntable.sync.SyncWorker;
 
 import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * Sessions list: one row per badge, newest first, plus the Camera screen on its own. With
- * Samba set up, each row shows its sync state with a Sync button, and the menu has Sync all.
- * Long-press a row to sync or delete it.
+ * Sessions list: one row per badge, newest first, plus the Camera screen on its own. Kept
+ * up to date as captures and the editor change sessions.
  */
-public final class MainActivity extends AppCompatActivity implements SessionAdapter.Actions {
+public final class MainActivity extends AppCompatActivity implements SessionAdapter.Actions, SessionStore.Listener {
     private final ExecutorService io = Executors.newSingleThreadExecutor();
-    private SessionStore store;
+    private final ExecutorService thumbs = Executors.newFixedThreadPool(2);
+    private Station station;
     private SessionAdapter adapter;
-    private boolean samba;
+    private RemoteBanner banner;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -44,8 +45,9 @@ public final class MainActivity extends AppCompatActivity implements SessionAdap
         MaterialToolbar toolbar = findViewById(R.id.toolbar);
         setSupportActionBar(toolbar);
 
-        store = new SessionStore(this);
-        adapter = new SessionAdapter(this);
+        station = App.station(this);
+        banner = new RemoteBanner(this, findViewById(R.id.remote_banner));
+        adapter = new SessionAdapter(station.sessions, thumbs, this);
         RecyclerView list = findViewById(R.id.sessions);
         list.setLayoutManager(new LinearLayoutManager(this));
         list.setAdapter(adapter);
@@ -54,9 +56,6 @@ public final class MainActivity extends AppCompatActivity implements SessionAdap
                 startActivity(new Intent(this, SessionEditActivity.class)));
         findViewById(R.id.camera).setOnClickListener(v ->
                 startActivity(new Intent(this, CaptureActivity.class)));
-        // Rows change as the sync worker queues, uploads and finishes.
-        WorkManager.getInstance(this).getWorkInfosForUniqueWorkLiveData(SyncWorker.WORK_NAME)
-                .observe(this, infos -> reload());
 
         // With the editor doing the typing, the camera is what's needed first; Back comes here.
         if (savedInstanceState == null && RemoteServer.enabled(this)) {
@@ -65,20 +64,38 @@ public final class MainActivity extends AppCompatActivity implements SessionAdap
     }
 
     @Override
-    protected void onResume() {
-        super.onResume();
+    protected void onStart() {
+        super.onStart();
+        banner.start();
+        station.sessions.addListener(this);
+        reload();
+    }
+
+    @Override
+    protected void onStop() {
+        station.sessions.removeListener(this);
+        banner.stop();
+        super.onStop();
+    }
+
+    @Override
+    public void onSessionChanged(Session s) {
+        reload();
+    }
+
+    @Override
+    public void onSessionRemoved(String id) {
         reload();
     }
 
     private void reload() {
         io.execute(() -> {
-            List<Session> sessions = store.list();
-            boolean configured = SmbSettings.load(this).isConfigured();
+            List<Session> sessions = station.sessions.list();
+            Station.Target t = station.target();
             runOnUiThread(() -> {
-                samba = configured;
-                adapter.submit(sessions, store, configured);
+                if (isDestroyed()) return;
+                adapter.submit(sessions, t.isSession() ? t.sessionId : null);
                 findViewById(R.id.empty).setVisibility(sessions.isEmpty() ? android.view.View.VISIBLE : android.view.View.GONE);
-                invalidateOptionsMenu();
             });
         });
     }
@@ -91,49 +108,40 @@ public final class MainActivity extends AppCompatActivity implements SessionAdap
     }
 
     @Override
-    public void sync(Session s) {
-        queueSync(s);
-    }
-
-    @Override
     public void more(Session s) {
-        String name = s.title.isEmpty() ? s.effectiveSlug() : s.title;
-        CharSequence[] items = samba
-                ? new CharSequence[]{getString(R.string.sync), getString(R.string.delete)}
-                : new CharSequence[]{getString(R.string.delete)};
+        CharSequence[] items = new CharSequence[]{getString(R.string.delete)};
         new MaterialAlertDialogBuilder(this)
-                .setTitle(name)
-                .setItems(items, (d, which) -> {
-                    if (samba && which == 0) queueSync(s);
-                    else confirmDelete(s, name);
-                })
+                .setTitle(s.name)
+                .setItems(items, (d, which) -> confirmDelete(s))
                 .show();
     }
 
-    private void confirmDelete(Session s, String name) {
+    private void confirmDelete(Session s) {
         new MaterialAlertDialogBuilder(this)
-                .setTitle(getString(R.string.delete_session_title, name))
-                .setMessage(samba ? R.string.delete_session_message_samba : R.string.delete_session_message)
-                .setPositiveButton(R.string.delete, (d, w) -> io.execute(() -> {
-                    store.delete(s);
-                    SyncWorker.forget(this, store, s);
-                    reload();
-                }))
+                .setTitle(getString(R.string.delete_session_title, s.name))
+                .setMessage(R.string.delete_session_message)
+                .setPositiveButton(R.string.delete, (d, w) -> delete(s))
                 .setNegativeButton(android.R.string.cancel, null)
                 .show();
     }
 
-    /** One badge, or all that aren't synced (null). */
-    private void queueSync(Session only) {
-        io.execute(() -> {
+    /** The open session is closed first; one being captured into can't be deleted. */
+    private void delete(Session s) {
+        Job running = station.jobs.current();
+        if (running != null && s.id.equals(running.targetSessionId())) {
+            Toast.makeText(this, getString(R.string.delete_session_busy, s.name), Toast.LENGTH_LONG).show();
+            return;
+        }
+        Station.Target t = station.target();
+        if (t.isSession() && s.id.equals(t.sessionId)) {
             try {
-                SyncWorker.syncNow(this, only);
-                runOnUiThread(() -> Toast.makeText(this, R.string.sync_queued, Toast.LENGTH_SHORT).show());
-            } catch (Exception e) {
-                runOnUiThread(() -> Toast.makeText(this, e.getMessage(), Toast.LENGTH_LONG).show());
+                station.closeTarget(Job.PHONE);
+            } catch (ApiException e) {
+                Toast.makeText(this, e.getMessage(), Toast.LENGTH_LONG).show();
+                return;
             }
-            reload();
-        });
+        }
+        io.execute(() -> station.sessions.delete(s));
     }
 
     // ---- Menu --------------------------------------------------------------------
@@ -145,21 +153,7 @@ public final class MainActivity extends AppCompatActivity implements SessionAdap
     }
 
     @Override
-    public boolean onPrepareOptionsMenu(Menu menu) {
-        MenuItem sync = menu.findItem(R.id.action_sync);
-        if (sync != null) {
-            sync.setEnabled(samba);
-            sync.setTitle(samba ? R.string.action_sync : R.string.action_sync_not_set_up);
-        }
-        return super.onPrepareOptionsMenu(menu);
-    }
-
-    @Override
     public boolean onOptionsItemSelected(@NonNull MenuItem item) {
-        if (item.getItemId() == R.id.action_sync) {
-            queueSync(null);
-            return true;
-        }
         if (item.getItemId() == R.id.action_settings) {
             startActivity(new Intent(this, SettingsActivity.class));
             return true;
@@ -170,6 +164,7 @@ public final class MainActivity extends AppCompatActivity implements SessionAdap
     @Override
     protected void onDestroy() {
         io.shutdown();
+        thumbs.shutdownNow();
         super.onDestroy();
     }
 }

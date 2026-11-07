@@ -1,4 +1,2 @@
-# Minify is off for now. If it's turned on, smbj and OpenCV need keep rules:
-# -keep class com.hierynomus.** { *; }
-# -keep class net.engio.mbassy.** { *; }
+# Minify is off for now. If it's turned on, OpenCV needs a keep rule:
 # -keep class org.opencv.** { *; }

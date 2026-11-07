@@ -19,6 +19,9 @@ import org.snurkle.badgeturntable.jobs.Job;
 import org.snurkle.badgeturntable.jobs.JobRunner;
 import org.snurkle.badgeturntable.jobs.Json;
 import org.snurkle.badgeturntable.rig.Rig;
+import org.snurkle.badgeturntable.rig.Station;
+import org.snurkle.badgeturntable.session.Session;
+import org.snurkle.badgeturntable.session.SessionStore;
 import org.snurkle.badgeturntable.ring.RingDetector;
 import org.snurkle.badgeturntable.ring.RingReading;
 
@@ -46,9 +49,11 @@ import java.util.function.LongConsumer;
 
 /**
  * Remote control from the web editor (Spec.md, Remote control; wire format in
- * Remote-API.md): the HTTP API, the /api/live WebSocket with status, ring readings, job and
- * shot events and preview frames, pairing, and the mDNS name. Runs while the Capture screen
- * is visible and Settings → Remote control is on.
+ * Remote-API.md): the HTTP API, the /api/live WebSocket with status, ring readings, job,
+ * shot, session and target events and preview frames, pairing, and the mDNS name. The
+ * {@link Station} runs it while the app is in the foreground and Settings → Remote control
+ * is on. Ring readings, preview frames and camera events flow while the Capture screen's
+ * {@link Rig} is attached.
  */
 public final class RemoteServer {
     private static final String TAG = "RemoteServer";
@@ -58,11 +63,6 @@ public final class RemoteServer {
     private static final int MAX_CLIENTS = 4;
     private static final long AUTH_TIMEOUT_MS = 5000;
     private static final long RING_EVERY_MS = 200;
-
-    /** What the Capture screen shows: name, address, code, connected PCs. */
-    public interface Listener {
-        void onRemoteChanged();
-    }
 
     /** One editor tab's WebSocket. */
     static final class Client {
@@ -79,14 +79,15 @@ public final class RemoteServer {
     }
 
     final Context context;
-    final Rig rig;
+    final Station station;
+    /** The Capture screen's rig while it's attached. */
+    private volatile Rig rig;
     final SharedPreferences prefs;
     final Pairing pairing;
     final String deviceId;
     final String name;
     final int port;
     final List<Client> clients = new CopyOnWriteArrayList<>();
-    private final Listener listener;
     private final PreviewEncoder encoder = new PreviewEncoder();
     private ScheduledExecutorService timer;
     private HttpServer http;
@@ -108,15 +109,25 @@ public final class RemoteServer {
             broadcast(Json.obj("type", "shot_removed", "id", id));
         }
     };
+    private final SessionStore.Listener sessionListener = new SessionStore.Listener() {
+        @Override
+        public void onSessionChanged(Session s) {
+            broadcastLater(() -> broadcast(Json.obj("type", "session", "session", sessionSummary(s))));
+        }
+
+        @Override
+        public void onSessionRemoved(String id) {
+            broadcast(Json.obj("type", "session_removed", "id", id));
+        }
+    };
     private final Consumer<CameraSettings> cameraListener = this::onCameraChanged;
     private final LongConsumer countdownListener = ms -> broadcast(Json.obj("type", "countdown", "remainingMs", ms));
     private final RingDetector.Listener ringListener = this::onRing;
     private final RingDetector.FrameTap frameTap = this::onFrame;
 
-    public RemoteServer(Context context, Rig rig, Listener listener) {
-        this.context = context.getApplicationContext();
-        this.rig = rig;
-        this.listener = listener;
+    public RemoteServer(Station station) {
+        this.context = station.context;
+        this.station = station;
         this.prefs = PreferenceManager.getDefaultSharedPreferences(this.context);
         this.pairing = new Pairing(new PrefsStore(prefs), SystemClock::elapsedRealtime);
         this.deviceId = deviceId(prefs);
@@ -144,12 +155,9 @@ public final class RemoteServer {
             broadcast(Json.obj("type", "notice", "level", "info", "text", "The pairing code on the phone changed."));
             notifyUi();
         });
-        rig.jobs.addListener(jobListener);
-        rig.shots.addListener(shotListener);
-        rig.camera.addSettingsListener(cameraListener);
-        rig.addCountdownListener(countdownListener);
-        rig.ring.addListener(ringListener);
-        rig.ring.setFrameTap(frameTap);
+        station.jobs.addListener(jobListener);
+        station.shots.addListener(shotListener);
+        station.sessions.addListener(sessionListener);
         timer = Executors.newSingleThreadScheduledExecutor();
         timer.scheduleWithFixedDelay(this::tick, 500, 500, TimeUnit.MILLISECONDS);
         startMdns();
@@ -160,12 +168,11 @@ public final class RemoteServer {
     public void stop() {
         if (timer != null) timer.shutdownNow();
         timer = null;
-        rig.jobs.removeListener(jobListener);
-        rig.shots.removeListener(shotListener);
-        rig.camera.removeSettingsListener(cameraListener);
-        rig.removeCountdownListener(countdownListener);
-        rig.ring.removeListener(ringListener);
-        rig.ring.setFrameTap(null);
+        station.jobs.removeListener(jobListener);
+        station.shots.removeListener(shotListener);
+        station.sessions.removeListener(sessionListener);
+        Rig r = rig;
+        if (r != null) detachRig(r);
         pairing.setCodeListener(null);
         for (Client c : clients) c.ws.close(1001, "The phone stopped remote control");
         if (mdns != null) mdns.stop();
@@ -177,7 +184,41 @@ public final class RemoteServer {
         clients.clear();
     }
 
-    // ---- For the Capture screen ------------------------------------------------
+    /** The Capture screen opened: stream its camera, ring and preview. Main thread. */
+    public void attachRig(Rig r) {
+        Rig old = rig;
+        if (old == r) return;
+        if (old != null) detachRig(old);
+        rig = r;
+        r.camera.addSettingsListener(cameraListener);
+        r.addCountdownListener(countdownListener);
+        r.ring.addListener(ringListener);
+        r.ring.setFrameTap(frameTap);
+        broadcastLater(() -> broadcast(statusMessage()));
+    }
+
+    /** The Capture screen closed. Main thread. */
+    public void detachRig(Rig r) {
+        if (rig != r) return;
+        r.camera.removeSettingsListener(cameraListener);
+        r.removeCountdownListener(countdownListener);
+        r.ring.removeListener(ringListener);
+        r.ring.setFrameTap(null);
+        rig = null;
+        lastAxis = null;
+        broadcastLater(() -> broadcast(statusMessage()));
+    }
+
+    /** The capture target changed: tell every tab, with who changed it. */
+    public void targetChanged(Station.Target prev, Station.Target next, String by) {
+        broadcastLater(() -> {
+            broadcast(Json.obj("type", "target", "target", next.toJson(), "by", by,
+                    "previous", prev.toJson()));
+            broadcast(statusMessage());
+        });
+    }
+
+    // ---- For the screens -------------------------------------------------------
 
     public boolean running() {
         return http != null;
@@ -208,7 +249,7 @@ public final class RemoteServer {
     }
 
     private void notifyUi() {
-        if (listener != null) listener.onRemoteChanged();
+        station.fire();
     }
 
     // ---- State the API reports ---------------------------------------------------
@@ -216,7 +257,7 @@ public final class RemoteServer {
     JSONObject info(Boolean paired) {
         return Json.obj("api", API_VERSION, "app", "Badge Turntable", "appVersion", appVersion(),
                 "deviceId", deviceId, "name", name, "model", model(), "port", port,
-                "addresses", Json.arr(addresses()), "paired", paired, "busy", rig.jobs.current() != null);
+                "addresses", Json.arr(addresses()), "paired", paired, "busy", station.jobs.current() != null);
     }
 
     JSONObject status() {
@@ -224,21 +265,33 @@ public final class RemoteServer {
         for (Client c : clients) {
             if (c.paired != null) cl.put(Json.obj("clientName", c.paired.clientName, "since", Json.time(c.openedAtMs)));
         }
-        Job job = rig.jobs.current();
+        Job job = station.jobs.current();
+        Rig open = station.cameraOpen() ? station.rig() : null;
+        Rig info = station.rigOrIdle();
+        long[] sessions = station.sessions.totals();
         return Json.obj(
                 "clients", cl,
-                "turntable", Json.obj("profileId", rig.profile.id, "profileName", rig.profile.name,
-                        "irAvailable", rig.irAvailable(), "roles", rig.rolesJson(),
-                        "frontRingDeg", Json.deg(rig.frontRingDeg())),
-                "calibration", rig.calibrationJson(),
-                "ring", ringJson(rig.ring.latest()),
-                "camera", rig.cameraSettingsJson(),
+                "cameraOpen", open != null,
+                "target", station.target().toJson(),
+                "sessions", Json.obj("count", sessions[0], "bytes", sessions[1]),
+                "turntable", Json.obj("profileId", info.profile.id, "profileName", info.profile.name,
+                        "irAvailable", info.irAvailable(), "roles", info.rolesJson(),
+                        "frontRingDeg", Json.deg(info.frontRingDeg())),
+                "calibration", info.calibrationJson(),
+                "ring", ringJson(open == null ? null : open.ring.latest()),
+                "camera", open == null ? null : open.cameraSettingsJson(),
                 "job", job == null ? null : job.toJson(),
-                "shots", Json.obj("count", rig.shots.count(), "bytes", rig.shots.bytes()),
-                "storage", Json.obj("freeBytes", rig.freeBytes()));
+                "shots", Json.obj("count", station.shots.count(), "bytes", station.shots.bytes()),
+                "storage", Json.obj("freeBytes", info.freeBytes()));
     }
 
+    /** @param r null when the Capture screen is closed */
     JSONObject ringJson(RingReading r) {
+        if (r == null) {
+            return Json.obj("ok", false, "ringDeg", null, "tableDeg", null, "frontDeg", null,
+                    "markers", 0, "rmsPx", null, "frameUs", null);
+        }
+        Rig rig = station.rigOrIdle();
         boolean ok = r.ok();
         return Json.obj("ok", ok, "ringDeg", ok ? Json.deg(r.angleDeg) : null,
                 "tableDeg", ok ? Json.deg(rig.tableDeg(r.angleDeg)) : null,
@@ -247,11 +300,12 @@ public final class RemoteServer {
     }
 
     JSONObject sessionJson() {
-        List<JSONObject> jobs = new ArrayList<>(rig.shots.jobRecords());
-        Job current = rig.jobs.current();
+        List<JSONObject> jobs = new ArrayList<>(station.shots.jobRecords());
+        Job current = station.jobs.current();
         if (current != null && !current.shotIds().isEmpty()) jobs.add(current.recordJson());
         JSONArray shots = new JSONArray();
-        for (JSONObject s : rig.shots.list()) shots.put(s);
+        for (JSONObject s : station.shots.list()) shots.put(s);
+        Rig rig = station.rigOrIdle();
         String[] cal = rig.calibrationState();
         return Json.obj("api", API_VERSION,
                 "device", Json.obj("deviceId", deviceId, "model", model(), "appVersion", appVersion()),
@@ -259,6 +313,28 @@ public final class RemoteServer {
                 "calibration", "missing".equals(cal[0]) ? null : rig.calibrationJson(),
                 "jobs", Json.arr(jobs),
                 "shots", shots);
+    }
+
+    // ---- Sessions as the API shows them -------------------------------------------
+
+    JSONObject sessionSummary(Session s) {
+        Station.Target t = station.target();
+        Job job = station.jobs.current();
+        return Json.obj("id", s.id, "name", s.name,
+                "createdAt", Json.time(s.createdAtMs), "updatedAt", Json.time(s.updatedAtMs),
+                "open", t.isSession() && s.id.equals(t.sessionId),
+                "busy", job != null && s.id.equals(job.targetSessionId()),
+                "hasNotes", !s.notes.trim().isEmpty(),
+                "mediaCount", s.media.size(), "bytes", station.sessions.bytes(s), "cover", s.cover());
+    }
+
+    JSONObject sessionDetail(Session s) {
+        JSONObject o = sessionSummary(s);
+        Json.put(o, "notes", s.notes);
+        JSONArray media = new JSONArray();
+        for (Session.Media m : SessionMedia.ordered(s)) media.put(SessionMedia.toJson(station.sessions, s, m));
+        Json.put(o, "media", media);
+        return o;
     }
 
     // ---- WebSocket ---------------------------------------------------------------
@@ -366,7 +442,10 @@ public final class RemoteServer {
     }
 
     private void onCameraChanged(CameraSettings ignored) {
-        broadcastLater(() -> broadcast(Json.obj("type", "camera", "settings", rig.cameraSettingsJson())));
+        broadcastLater(() -> {
+            Rig r = rig;
+            if (r != null) broadcast(Json.obj("type", "camera", "settings", r.cameraSettingsJson()));
+        });
     }
 
     private void onJobChanged(Job job) {
@@ -377,7 +456,7 @@ public final class RemoteServer {
     /** Ring readings, at most 5 a second, with marker positions for the editor's overlay. */
     private void onRing(@NonNull RingReading r) {
         long now = SystemClock.uptimeMillis();
-        if (now - lastRingSentMs < RING_EVERY_MS || authedClients() == 0) return;
+        if (now - lastRingSentMs < RING_EVERY_MS || authedClients() == 0 || rig == null) return;
         lastRingSentMs = now;
         JSONArray markers = new JSONArray();
         if (r.frameWidth > 0 && r.frameHeight > 0) {
@@ -530,6 +609,13 @@ public final class RemoteServer {
     }
 
     public static void revoke(Context context, String tokenHash) {
+        // The running server holds the paired list too: revoke there, and drop that PC's sockets.
+        RemoteServer live = org.snurkle.badgeturntable.App.station(context).server();
+        if (live != null) {
+            live.pairing.revoke(tokenHash);
+            live.closeRevoked();
+            return;
+        }
         PrefsStore store = new PrefsStore(PreferenceManager.getDefaultSharedPreferences(context));
         List<Pairing.Client> list = store.load();
         for (Iterator<Pairing.Client> it = list.iterator(); it.hasNext(); ) {

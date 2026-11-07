@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Session files, opened in the phone's photo or video viewer from the Session screen -->
+    <external-files-path name="sessions" path="sessions" />
+</paths>

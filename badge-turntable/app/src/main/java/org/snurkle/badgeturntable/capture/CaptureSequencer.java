@@ -33,7 +33,7 @@ import java.util.function.DoubleSupplier;
  * Blocking: it runs on the job thread, and an interrupt (Stop) ends it, stopping the table
  * and any recording and keeping what was captured. Questions (move failed, manual
  * positioning) go to the {@link Listener}, which blocks until the phone or the editor answers.
- * Prechecks (calibration, storage, Samba) happen before capture() is called.
+ * Prechecks (calibration, storage) happen before capture() is called.
  */
 public final class CaptureSequencer {
     private static final String TAG = "CaptureSequencer";
@@ -213,7 +213,7 @@ public final class CaptureSequencer {
                 }
             }
             l.onStep(step, of, "Capturing " + view.caption + "…");
-            File original = t.originalFile(view.filename(prefix));
+            File original = t.scratchFile(view.filename(prefix));
             takeStill(original);
             RingReading r = ring.latest();
             double actual = r.ok() && !Double.isNaN(start) ? fromFront(view.angle, r.angleDeg, start, sign) : Double.NaN;
@@ -483,7 +483,7 @@ public final class CaptureSequencer {
     /** Writes a still taken in memory (original plus web copy) and records it. */
     private void saveStill(CaptureTarget t, String filename, String caption, double nominal, double actual,
                            String setLabel, CameraController.TimedStill still) throws Exception {
-        File original = t.originalFile(filename);
+        File original = t.scratchFile(filename);
         mkdirs(original.getParentFile());
         try (FileOutputStream out = new FileOutputStream(original)) {
             out.write(still.jpeg);
@@ -496,10 +496,20 @@ public final class CaptureSequencer {
         record(t, original, filename, caption, nominal, actual, setLabel);
     }
 
-    /** Makes the web copy of an original and records the still. Angles are from the front, NaN if unknown. */
+    /**
+     * Makes the web copy of a full-size still, deletes the full-size file (only web copies are
+     * kept) and records the still. Angles are from the front, NaN if unknown.
+     */
     private void record(CaptureTarget t, File original, String filename, String caption, double nominal,
                         double actual, String setLabel) throws IOException {
-        WebImages.writeWebCopy(original, t.webFile(filename));
+        File web = t.webFile(filename);
+        mkdirs(web.getParentFile());
+        try {
+            WebImages.writeWebCopy(original, web);
+        } finally {
+            //noinspection ResultOfMethodCallIgnored
+            original.delete();
+        }
         Session.Media m = new Session.Media(filename, caption, Session.Media.Kind.IMAGE);
         m.angleNominal = nominal;
         m.angleActual = actual;
@@ -528,7 +538,7 @@ public final class CaptureSequencer {
             throws Exception {
         String prefix = Slugs.setPrefix(o.setLabel);
         if (!turning) l.onStep(videoStep(o), stepCount(o), "Recording the spin…");
-        File source = t.originalFile(prefix + "spin-source.mp4");
+        File source = t.scratchFile(prefix + "spin-source.mp4");
         File web = t.webFile(prefix + "spin.mp4");
         mkdirs(source.getParentFile());
         mkdirs(web.getParentFile());
@@ -559,7 +569,11 @@ public final class CaptureSequencer {
             if (afterRecording != null) afterRecording.run();  // e.g. stop the table before encoding
             if (interrupted) Thread.currentThread().interrupt();
         }
-        if (!keep) return false;
+        if (!keep) {
+            //noinspection ResultOfMethodCallIgnored
+            source.delete();
+            return false;
+        }
 
         long[] rev = log.oneRevolution();
         long startUs, endUs;
@@ -575,8 +589,13 @@ public final class CaptureSequencer {
         m.setLabel = o.setLabel;
         t.encoding(m);
         l.onStatus("Encoding the spin video…");
-        SpinTranscoder.transcode(context, source, web, startUs, endUs);
-        t.add(m);
+        try {
+            SpinTranscoder.transcode(context, source, web, startUs, endUs);
+            t.add(m);
+        } finally {
+            //noinspection ResultOfMethodCallIgnored
+            source.delete();  // only the web copy is kept
+        }
         return true;
     }
 
@@ -593,7 +612,7 @@ public final class CaptureSequencer {
         l.onStep(1, 1, "Capturing " + label + "…");
         countdown(delayMs, l);
         l.onStatus("Capturing " + label + "…");
-        File original = t.originalFile(name);
+        File original = t.scratchFile(name);
         takeStill(original);
         record(t, original, name, label, Double.NaN, Double.NaN, null);
         t.finish();

@@ -4,7 +4,7 @@ import java.text.Normalizer;
 import java.util.Locale;
 import java.util.Set;
 
-/** Folder and file names, following the repo's conventions (e.g. dczia-mk9-2026). */
+/** File names, following the repo's conventions (lowercase kebab-case). */
 public final class Slugs {
     private Slugs() {}
 
@@ -15,17 +15,6 @@ public final class Slugs {
         return ascii.toLowerCase(Locale.ROOT)
                 .replaceAll("[^a-z0-9]+", "-")
                 .replaceAll("^-+|-+$", "");
-    }
-
-    /** {group}-{title}-{year}, skipping empty parts. */
-    public static String make(String group, String title, int year) {
-        StringBuilder sb = new StringBuilder();
-        for (String part : new String[]{kebab(group), kebab(title), year > 0 ? String.valueOf(year) : ""}) {
-            if (part.isEmpty()) continue;
-            if (sb.length() > 0) sb.append('-');
-            sb.append(part);
-        }
-        return sb.toString();
     }
 
     /**

@@ -4,19 +4,15 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-/** session.json, stored in _capture/<con>/<slug>/. */
+/** session.json, stored in sessions/&lt;id&gt;/. */
 public final class SessionJson {
     private SessionJson() {}
 
     public static JSONObject toJson(Session s) throws JSONException {
         JSONObject o = new JSONObject()
-                .put("id", s.id).put("createdAtMs", s.createdAtMs)
-                .put("title", s.title).put("con", s.con).put("year", s.year)
-                .put("group", s.group).put("event", s.event)
-                .put("slug", s.effectiveSlug()).put("slugEdited", s.slugEdited)
-                .put("badgeId", s.badgeId)
-                .put("captureVideo", s.captureVideo).put("autoMode", s.autoMode)
-                .put("syncState", s.syncState.name());
+                .put("id", s.id).put("createdAtMs", s.createdAtMs).put("updatedAtMs", s.updatedAtMs)
+                .put("name", s.name).put("notes", s.notes)
+                .put("captureVideo", s.captureVideo).put("autoMode", s.autoMode);
         JSONArray media = new JSONArray();
         for (Session.Media m : s.media) {
             JSONObject j = new JSONObject()
@@ -28,7 +24,6 @@ public final class SessionJson {
             media.put(j);
         }
         o.put("media", media);
-        o.put("removed", new JSONArray(s.removed));
         return o;
     }
 
@@ -36,17 +31,11 @@ public final class SessionJson {
         Session s = new Session();
         s.id = o.getString("id");
         s.createdAtMs = o.optLong("createdAtMs", s.createdAtMs);
-        s.title = o.optString("title");
-        s.con = o.optString("con", "defcon");
-        s.year = o.optInt("year");
-        s.group = o.optString("group");
-        s.event = o.optString("event");
-        s.slug = o.optString("slug");
-        s.slugEdited = o.optBoolean("slugEdited");
-        s.badgeId = o.optString("badgeId");
+        s.updatedAtMs = o.optLong("updatedAtMs", s.createdAtMs);
+        s.name = o.optString("name");
+        s.notes = o.optString("notes");
         s.captureVideo = o.optBoolean("captureVideo", true);
         s.autoMode = o.optBoolean("autoMode", true);
-        s.syncState = Session.SyncState.valueOf(o.optString("syncState", Session.SyncState.LOCAL_ONLY.name()));
         JSONArray media = o.optJSONArray("media");
         if (media != null) {
             for (int i = 0; i < media.length(); i++) {
@@ -60,8 +49,6 @@ public final class SessionJson {
                 s.media.add(m);
             }
         }
-        JSONArray removed = o.optJSONArray("removed");
-        if (removed != null) for (int i = 0; i < removed.length(); i++) s.removed.add(removed.getString(i));
         return s;
     }
 }

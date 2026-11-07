@@ -8,11 +8,13 @@ import java.util.Set;
 
 /**
  * Where a capture's files go: a badge session ({@link SessionTarget}), or the unnamed set
- * of shots the phone holds for the editor (RemoteShots).
+ * of shots the phone holds for the editor (RemoteShots). Only web copies are kept: the
+ * full-size still or source video is written to a scratch file, the web copy is made from
+ * it, and the scratch file is deleted.
  */
 public interface CaptureTarget {
-    /** Where the full-resolution original (or source video) with this name goes. */
-    File originalFile(String filename);
+    /** Where the full-size still (or source video) with this name is written while it's processed. */
+    File scratchFile(String filename);
 
     /** Where the web copy with this name goes. */
     File webFile(String filename);
@@ -26,6 +28,6 @@ public interface CaptureTarget {
     /** A still or spin is written: record it. A file with the same name replaces the old one. */
     void add(Session.Media m) throws IOException;
 
-    /** After a capture or extra shot (index.md, sync queue). */
+    /** After a capture or extra shot. */
     default void finish() throws IOException {}
 }

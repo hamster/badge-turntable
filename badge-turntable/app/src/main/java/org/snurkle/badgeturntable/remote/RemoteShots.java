@@ -34,13 +34,13 @@ import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * The one unnamed set of shots the phone holds for the editor (Remote-API.md, Shots): no
- * badge identity, slug or index.md. Files keep the standard names; the editor decides where
- * they go. Kept in app storage with a shots.json index, so they survive the editor
- * disconnecting and the app restarting, until the editor deletes them.
+ * name or notes. Files keep the standard names; the editor decides where they go. Kept in
+ * app storage with a shots.json index, so they survive the editor disconnecting and the app
+ * restarting, until the editor deletes them. Only web copies are kept (Spec.md, Output).
  *
  * <pre>
  * files/remote/web/        web copies (2400 px JPEG, transcoded MP4)
- * files/remote/originals/  full-resolution stills, source videos
+ * files/remote/scratch/    full-size stills and source videos while they're processed
  * files/remote/thumbs/     320 px JPEG per shot ID
  * files/remote/shots.json
  * </pre>
@@ -79,24 +79,24 @@ public final class RemoteShots {
     }
 
     static final class Shot {
-        String id, kind, setLabel, view, label, filename, caption, jobId, originalName;
+        String id, kind, setLabel, view, label, filename, caption, jobId;
         double nominal = Double.NaN, actual = Double.NaN;
         long takenAtMs;
         boolean ready = true;
-        Info web, original;
+        Info web;
         Long durationMs;
 
+        /** {@code original} is always null: the phone keeps only the web copy. */
         JSONObject toJson() {
             return Json.obj("id", id, "kind", kind, "setLabel", setLabel, "view", view, "label", label,
                     "filename", filename, "caption", caption, "nominalDeg", Json.deg(nominal),
                     "actualDeg", Json.deg(actual), "takenAt", Json.time(takenAtMs), "jobId", jobId,
                     "ready", ready, "web", web == null ? null : web.toJson(),
-                    "original", original == null ? null : original.toJson(), "durationMs", durationMs);
+                    "original", null, "durationMs", durationMs);
         }
 
         JSONObject storeJson() {
             JSONObject o = toJson();
-            Json.put(o, "originalName", originalName);
             Json.put(o, "takenAtMs", takenAtMs);
             return o;
         }
@@ -111,13 +111,11 @@ public final class RemoteShots {
             s.filename = o.optString("filename");
             s.caption = o.optString("caption");
             s.jobId = str(o, "jobId");
-            s.originalName = o.optString("originalName", s.filename);
             s.nominal = o.isNull("nominalDeg") ? Double.NaN : o.optDouble("nominalDeg");
             s.actual = o.isNull("actualDeg") ? Double.NaN : o.optDouble("actualDeg");
             s.takenAtMs = o.optLong("takenAtMs");
             s.ready = o.optBoolean("ready", true);
             s.web = Info.fromJson(o.optJSONObject("web"));
-            s.original = Info.fromJson(o.optJSONObject("original"));
             s.durationMs = o.isNull("durationMs") ? null : o.optLong("durationMs");
             return s;
         }
@@ -127,7 +125,7 @@ public final class RemoteShots {
         }
     }
 
-    private final File web, originals, thumbs, index;
+    private final File web, scratch, thumbs, index;
     private final List<Listener> listeners = new CopyOnWriteArrayList<>();
     // Guarded by this.
     private final List<Shot> shots = new ArrayList<>();
@@ -139,10 +137,15 @@ public final class RemoteShots {
     public RemoteShots(File filesDir) {
         File dir = new File(filesDir, "remote");
         web = new File(dir, "web");
-        originals = new File(dir, "originals");
+        scratch = new File(dir, "scratch");
         thumbs = new File(dir, "thumbs");
         index = new File(dir, "shots.json");
         load();
+        File[] left = scratch.listFiles();  // from a capture the app didn't finish
+        if (left != null) for (File f : left) {
+            //noinspection ResultOfMethodCallIgnored
+            f.delete();
+        }
     }
 
     public void addListener(Listener l) {
@@ -186,15 +189,11 @@ public final class RemoteShots {
         return out;
     }
 
-    /** A shot's file for a variant ("web", "original" or "thumb"), or null if there's no such shot. */
+    /** A shot's file for a variant ("web" or "thumb"), or null if there's no such shot. */
     public synchronized File file(String id, String variant) {
         Shot s = find(id);
         if (s == null) return null;
-        switch (variant) {
-            case "original": return new File(originals, s.originalName);
-            case "thumb": return new File(thumbs, s.id + ".jpg");
-            default: return new File(web, s.filename);
-        }
+        return "thumb".equals(variant) ? new File(thumbs, s.id + ".jpg") : new File(web, s.filename);
     }
 
     /** MIME type and download name for a variant. */
@@ -202,9 +201,8 @@ public final class RemoteShots {
         Shot s = find(id);
         if (s == null) return null;
         if ("thumb".equals(variant)) return new String[]{"image/jpeg", stem(s.filename) + "-thumb.jpg"};
-        Info i = "original".equals(variant) ? s.original : s.web;
-        String mime = i != null ? i.mime : "spin".equals(s.kind) ? "video/mp4" : "image/jpeg";
-        return new String[]{mime, "original".equals(variant) ? s.originalName : s.filename};
+        String mime = s.web != null ? s.web.mime : "spin".equals(s.kind) ? "video/mp4" : "image/jpeg";
+        return new String[]{mime, s.filename};
     }
 
     public synchronized boolean ready(String id) {
@@ -257,8 +255,8 @@ public final class RemoteShots {
     public CaptureTarget target(Job job) {
         return new CaptureTarget() {
             @Override
-            public File originalFile(String filename) {
-                return new File(originals, filename);
+            public File scratchFile(String filename) {
+                return new File(scratch, filename);
             }
 
             @Override
@@ -279,8 +277,8 @@ public final class RemoteShots {
             public void encoding(Session.Media m) {
                 Shot s = newShot(m, job);
                 s.ready = false;
-                s.original = videoInfo(new File(originals, s.originalName), s.originalName);
-                writeThumb(s, null, new File(originals, s.originalName));
+                // A thumbnail from the source video, so the editor can show it while it's encoded.
+                writeThumb(s, null, new File(scratch, sourceName(m.filename)));
                 store(s, job);
             }
 
@@ -320,11 +318,9 @@ public final class RemoteShots {
         if (m.kind == Session.Media.Kind.VIDEO) {
             s.kind = "spin";
             s.caption = m.setLabel != null ? m.setLabel + " (spin)" : "Spin";
-            s.originalName = m.filename.substring(0, m.filename.length() - "spin.mp4".length()) + "spin-source.mp4";
         } else if (!Double.isNaN(m.angleNominal)) {
             s.kind = "view";
             s.caption = m.caption;
-            s.originalName = m.filename;
             s.nominal = m.angleNominal;
             s.actual = m.angleActual;
             for (View v : View.values()) if (v.angle == (int) Math.round(m.angleNominal)) s.view = v.baseName;
@@ -332,22 +328,24 @@ public final class RemoteShots {
             s.kind = "extra";
             s.caption = m.caption;
             s.label = m.caption;
-            s.originalName = m.filename;
         }
         return s;
     }
 
-    /** Sizes and the thumbnail, once the files are written. */
+    /** "with-saos-spin.mp4" -> "with-saos-spin-source.mp4", the scratch recording's name. */
+    private static String sourceName(String spinFilename) {
+        return spinFilename.substring(0, spinFilename.length() - "spin.mp4".length()) + "spin-source.mp4";
+    }
+
+    /** Sizes and the thumbnail, once the web file is written. */
     private void fillFiles(Shot s) {
-        File w = new File(web, s.filename), o = new File(originals, s.originalName);
+        File w = new File(web, s.filename);
         if ("spin".equals(s.kind)) {
             s.web = videoInfo(w, s.filename);
-            s.original = videoInfo(o, s.originalName);
             s.durationMs = durationMs(w);
-            if (!new File(thumbs, s.id + ".jpg").isFile()) writeThumb(s, null, o);
+            if (!new File(thumbs, s.id + ".jpg").isFile()) writeThumb(s, null, w);
         } else {
             s.web = imageInfo(w, s.filename);
-            s.original = imageInfo(o, s.originalName);
             writeThumb(s, w, null);
         }
     }
@@ -406,8 +404,7 @@ public final class RemoteShots {
     }
 
     private void deleteFiles(Shot s) {
-        for (File f : new File[]{new File(web, s.filename), new File(originals, s.originalName),
-                new File(thumbs, s.id + ".jpg")}) {
+        for (File f : new File[]{new File(web, s.filename), new File(thumbs, s.id + ".jpg")}) {
             //noinspection ResultOfMethodCallIgnored
             f.delete();
         }
@@ -457,7 +454,7 @@ public final class RemoteShots {
         }
     }
 
-    private static Info imageInfo(File f, String name) {
+    static Info imageInfo(File f, String name) {
         Info i = new Info();
         i.mime = "image/jpeg";
         i.bytes = f.length();
@@ -478,7 +475,7 @@ public final class RemoteShots {
         return i;
     }
 
-    private static Info videoInfo(File f, String name) {
+    static Info videoInfo(File f, String name) {
         Info i = new Info();
         i.mime = "video/mp4";
         i.bytes = f.length();
@@ -498,7 +495,7 @@ public final class RemoteShots {
         return i;
     }
 
-    private static Long durationMs(File f) {
+    static Long durationMs(File f) {
         if (!f.isFile() || f.length() == 0) return null;
         try (MediaMetadataRetriever r = new MediaMetadataRetriever()) {
             r.setDataSource(f.getPath());

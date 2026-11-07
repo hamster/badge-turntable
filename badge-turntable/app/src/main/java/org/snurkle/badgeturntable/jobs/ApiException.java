@@ -44,8 +44,15 @@ public final class ApiException extends Exception {
         return field == null ? e : e.with("field", field);
     }
 
+    /** "The phone is capturing Mk9. Wait for it, or stop it.", with who and where. */
     public static ApiException busy(Job running) {
-        return new ApiException(409, "busy", running.kindLabel() + " is running. Stop it first.").with("jobId", running.id);
+        return new ApiException(409, "busy", running.describe() + ". Wait for it, or stop it.")
+                .with("jobId", running.id).with("source", running.source).with("target", running.target);
+    }
+
+    /** The Capture screen isn't open, so there's no camera, ring or sequencer. */
+    public static ApiException cameraClosed() {
+        return new ApiException(503, "camera_unavailable", "Open the Camera screen on the phone.");
     }
 
     public static ApiException notCalibrated() {

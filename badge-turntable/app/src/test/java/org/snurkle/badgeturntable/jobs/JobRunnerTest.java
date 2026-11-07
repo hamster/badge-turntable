@@ -56,6 +56,53 @@ public class JobRunnerTest {
     }
 
     @Test
+    public void busySaysWhoAndWhere() throws Exception {
+        CountDownLatch release = new CountDownLatch(1);
+        JSONObject target = Json.obj("kind", "session", "sessionId", "abc", "name", "Mk9");
+        Job first = runner.start(Job.Kind.CAPTURE, Job.PHONE, target, null, job -> {
+            job.addFile("front.jpg");
+            job.addFile("front.jpg");  // a re-shoot is listed once
+            release.await();
+            return null;
+        });
+        assertEquals("abc", first.targetSessionId());
+        try {
+            runner.start(Job.Kind.CAPTURE, Job.EDITOR, null, null, job -> null);
+            fail();
+        } catch (ApiException e) {
+            JSONObject body = e.body();
+            assertEquals("The phone is capturing Mk9. Wait for it, or stop it.", body.getString("message"));
+            assertEquals("phone", body.getString("source"));
+            assertEquals("Mk9", body.getJSONObject("target").getString("name"));
+        }
+        for (int i = 0; i < 200 && first.toJson().getJSONArray("filenames").length() == 0; i++) Thread.sleep(10);
+        assertEquals(1, first.toJson().getJSONArray("filenames").length());
+        release.countDown();
+        await(first, Job.State.DONE);
+
+        Job calibrate = runner.start(Job.Kind.CALIBRATE, Job.EDITOR, null, null, job -> null);
+        assertEquals("none", calibrate.toJson().getJSONObject("target").getString("kind"));
+        assertEquals("editor", calibrate.toJson().getString("source"));
+        assertNull(calibrate.targetSessionId());
+    }
+
+    @Test
+    public void stoppedByIsTheFirstToStop() throws Exception {
+        Job job = runner.start(Job.Kind.CAPTURE, Job.PHONE, null, null, j -> {
+            Thread.sleep(10_000);
+            return null;
+        });
+        runner.abort(Job.EDITOR);
+        try {
+            runner.abort(Job.PHONE);
+        } catch (ApiException ignored) {
+            // already finished
+        }
+        await(job, Job.State.ABORTED);
+        assertEquals("editor", job.toJson().getString("stoppedBy"));
+    }
+
+    @Test
     public void firstAnswerWins() throws Exception {
         String[] got = {null};
         Job job = runner.start(Job.Kind.CAPTURE, Json.obj("auto", true), j -> {

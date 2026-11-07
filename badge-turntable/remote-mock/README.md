@@ -28,6 +28,8 @@ python mock_phone.py
 | `--fail-move N` | The Nth closed-loop move fails with `no_movement` (repeatable) |
 | `--ring-blocked` | Start with the ring hidden |
 | `--deg-per-sec 24` | Table speed. The default, 90, keeps tests quick; the JAYEGT does about 24 |
+| `--sessions 2` | Start with that many sessions "captured on the phone" (four views and a lanyard shot each); the last one is open, so the editor has to join it or start a new set |
+| `--camera-closed` | Start as if the phone isn't on its Camera screen: camera endpoints answer `503` until `POST /api/camera/open` or `/mock/camera?open=1` |
 | `--rotate 0` | Preview header rotation. The default, 1, sends frames turned on their side, to test that the editor rotates them back |
 | `--port`, `--editor-port`, `--name` | As named. `--editor-port 0` turns the editor server off |
 | `--site <path>` | The badges site checkout to serve the editor from (default: `badges` beside this repo) |
@@ -44,9 +46,13 @@ Plain GETs, no auth, not part of the real API. Each returns the mock's state.
 | `/mock/ring?blocked=1` | Hide the ring (`blocked=0` shows it) |
 | `/mock/offline?ms=10000` | Drop off the network for that long, as if Wi-Fi went: requests go unanswered and WebSocket messages are lost, while a running job carries on (`ms=0` comes back) |
 | `/mock/fail-move?n=1` | Make the next (or nth from now) closed-loop move fail |
+| `/mock/camera?open=0` | Leave the Camera screen on the phone (stops a running job); `open=1` opens it |
+| `/mock/session?name=Mk9` | Make a session on the phone and open it, as the user at the phone would (`open=0` to leave it closed) |
+| `/mock/open?id=<id>` | Open that session on the phone (the editor has to join it again) |
+| `/mock/close` | Close the phone's session |
 | `/mock/uncalibrate` | Forget the calibration |
 | `/mock/revoke` | Revoke every token (tests the editor's re-pairing) |
-| `/mock/reset` | Revoke tokens, forget calibration and the front, drop shots, close sockets |
+| `/mock/reset` | Revoke tokens, forget calibration and the front, drop shots and sessions, clear the target, close sockets |
 
 ## Try the API with curl
 
@@ -54,4 +60,6 @@ Plain GETs, no auth, not part of the real API. Each returns the mock's state.
 curl -s http://127.0.0.1:8737/api/info
 curl -s -X POST -H "Content-Type: application/json" -d "{\"code\":\"123456\",\"clientName\":\"curl\"}" http://127.0.0.1:8737/api/pair
 curl -s -H "Authorization: Bearer <token>" http://127.0.0.1:8737/api/status
+curl -s -H "Authorization: Bearer <token>" http://127.0.0.1:8737/api/sessions
+curl -s -X POST -H "Authorization: Bearer <token>" -d "{\"shots\":true}" http://127.0.0.1:8737/api/target
 ```

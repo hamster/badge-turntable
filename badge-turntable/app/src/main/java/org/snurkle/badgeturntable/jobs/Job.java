@@ -19,6 +19,9 @@ public final class Job {
 
     public enum State { RUNNING, WAITING, DONE, FAILED, ABORTED }
 
+    /** Who started a job, or stopped it. */
+    public static final String PHONE = "phone", EDITOR = "editor";
+
     /** A question for the user. The first answer, from the phone or any editor tab, wins. */
     public static final class Prompt {
         public final String id;
@@ -48,6 +51,10 @@ public final class Job {
 
     public final String id;
     public final Kind kind;
+    /** {@link #PHONE} or {@link #EDITOR}. */
+    public final String source;
+    /** Where its files go: {kind: shots | session | none, sessionId, name}. */
+    public final JSONObject target;
     public final JSONObject params;
     public final long startedAtMs = System.currentTimeMillis();
     private final JobRunner runner;
@@ -61,6 +68,8 @@ public final class Job {
     private JSONObject result;
     private String errorCode, errorMessage;
     private final List<String> shotIds = new ArrayList<>();
+    private final List<String> filenames = new ArrayList<>();
+    private String stoppedBy;
     private JSONObject camera;
     private String doneText;
 
@@ -68,11 +77,42 @@ public final class Job {
     /** The thread running the body; guarded by this so an abort can't interrupt the next job. */
     Thread thread;
 
-    Job(JobRunner runner, String id, Kind kind, JSONObject params) {
+    Job(JobRunner runner, String id, Kind kind, String source, JSONObject target, JSONObject params) {
         this.runner = runner;
         this.id = id;
         this.kind = kind;
+        this.source = source == null ? PHONE : source;
+        this.target = target == null ? noTarget() : target;
         this.params = params == null ? new JSONObject() : params;
+    }
+
+    /** The target of a job that makes no files. */
+    public static JSONObject noTarget() {
+        return Json.obj("kind", "none", "sessionId", null, "name", null);
+    }
+
+    /** The session ID this job writes into, or null. */
+    public String targetSessionId() {
+        return "session".equals(target.optString("kind")) && !target.isNull("sessionId")
+                ? target.optString("sessionId") : null;
+    }
+
+    /**
+     * "The phone is capturing Mk9", "The editor is calibrating", for busy messages.
+     */
+    public String describe() {
+        String who = EDITOR.equals(source) ? "The editor" : "The phone";
+        String what;
+        switch (kind) {
+            case CALIBRATE: what = "is calibrating"; break;
+            case CAPTURE: what = "is capturing"; break;
+            case EXTRA: what = "is taking an extra shot"; break;
+            default: what = "is moving the table"; break;
+        }
+        String kindName = target.optString("kind");
+        String into = "session".equals(kindName) ? " " + target.optString("name")
+                : "shots".equals(kindName) ? " (shots for the editor)" : "";
+        return who + " " + what + into;
     }
 
     /** "Calibration", "Capture", … for messages. */
@@ -109,6 +149,15 @@ public final class Job {
         return new ArrayList<>(shotIds);
     }
 
+    public synchronized String stoppedBy() {
+        return stoppedBy;
+    }
+
+    /** Who stopped it (the first one, if both did). */
+    synchronized void setStoppedBy(String by) {
+        if (stoppedBy == null) stoppedBy = by;
+    }
+
     /** The camera settings in use, recorded in session.json. */
     public synchronized void setCamera(JSONObject settings) {
         camera = settings;
@@ -140,6 +189,14 @@ public final class Job {
     public void addShot(String shotId) {
         synchronized (this) {
             shotIds.add(shotId);
+        }
+        runner.changed(this);
+    }
+
+    /** A file written into the job's session. */
+    public void addFile(String filename) {
+        synchronized (this) {
+            if (!filenames.contains(filename)) filenames.add(filename);
         }
         runner.changed(this);
     }
@@ -196,6 +253,8 @@ public final class Job {
         return Json.obj(
                 "id", id,
                 "kind", kind.name().toLowerCase(Locale.ROOT),
+                "source", source,
+                "target", target,
                 "params", params,
                 "state", state.name().toLowerCase(Locale.ROOT),
                 "progress", Json.obj("step", step, "of", of, "text", text),
@@ -204,7 +263,9 @@ public final class Job {
                 "endedAt", Json.time(endedAtMs),
                 "result", result,
                 "error", errorCode == null ? null : Json.obj("error", errorCode, "message", errorMessage),
-                "shotIds", Json.arr(shotIds));
+                "stoppedBy", stoppedBy,
+                "shotIds", Json.arr(shotIds),
+                "filenames", Json.arr(filenames));
     }
 
     /** The job as session.json records it. */

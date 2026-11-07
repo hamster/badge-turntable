@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:fitsSystemWindows="true"
@@ -11,6 +12,8 @@
         android:layout_width="match_parent"
         android:layout_height="?attr/actionBarSize"
         app:navigationIcon="?attr/homeAsUpIndicator" />
+
+    <include layout="@layout/remote_banner" />
 
     <ScrollView
         android:layout_width="match_parent"
@@ -37,92 +40,48 @@
             </com.google.android.material.textfield.TextInputLayout>
 
             <com.google.android.material.textfield.TextInputLayout
-                style="?attr/textInputOutlinedExposedDropdownMenuStyle"
+                style="?attr/textInputOutlinedStyle"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                android:hint="@string/field_con">
+                android:layout_marginTop="16dp"
+                android:hint="@string/field_notes">
 
-                <com.google.android.material.textfield.MaterialAutoCompleteTextView
-                    android:id="@+id/con"
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/notes"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:inputType="text" />
+                    android:gravity="top|start"
+                    android:inputType="textMultiLine"
+                    android:minLines="4" />
             </com.google.android.material.textfield.TextInputLayout>
 
-            <com.google.android.material.textfield.TextInputLayout
-                style="?attr/textInputOutlinedStyle"
+            <!-- Media Review Gallery -->
+            <TextView
+                android:id="@+id/media_header"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                android:hint="@string/field_year">
+                android:layout_marginTop="20dp"
+                android:text="@string/field_media_review"
+                android:textAppearance="?attr/textAppearanceTitleMedium" />
 
-                <com.google.android.material.textfield.TextInputEditText
-                    android:id="@+id/year"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:inputType="number"
-                    android:maxLength="4" />
-            </com.google.android.material.textfield.TextInputLayout>
-
-            <com.google.android.material.textfield.TextInputLayout
-                style="?attr/textInputOutlinedStyle"
+            <TextView
+                android:id="@+id/media_empty"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                android:hint="@string/field_group">
+                android:layout_marginTop="8dp"
+                android:text="@string/media_empty"
+                android:textAppearance="?attr/textAppearanceBodyMedium"
+                android:textColor="?attr/colorOnSurfaceVariant" />
 
-                <com.google.android.material.textfield.TextInputEditText
-                    android:id="@+id/group"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content" />
-            </com.google.android.material.textfield.TextInputLayout>
-
-            <com.google.android.material.textfield.TextInputLayout
-                style="?attr/textInputOutlinedStyle"
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/media_list"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                android:hint="@string/field_event">
-
-                <com.google.android.material.textfield.TextInputEditText
-                    android:id="@+id/event"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content" />
-            </com.google.android.material.textfield.TextInputLayout>
-
-            <com.google.android.material.textfield.TextInputLayout
-                style="?attr/textInputOutlinedStyle"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                android:hint="@string/field_slug">
-
-                <com.google.android.material.textfield.TextInputEditText
-                    android:id="@+id/slug"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:fontFamily="monospace"
-                    android:inputType="textNoSuggestions" />
-            </com.google.android.material.textfield.TextInputLayout>
-
-            <com.google.android.material.textfield.TextInputLayout
-                android:id="@+id/badge_id_layout"
-                style="?attr/textInputOutlinedStyle"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                android:hint="@string/field_badge_id"
-                app:helperTextEnabled="true">
-
-                <com.google.android.material.textfield.TextInputEditText
-                    android:id="@+id/badge_id"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:fontFamily="monospace"
-                    android:inputType="textCapCharacters|textNoSuggestions"
-                    android:maxLength="3" />
-            </com.google.android.material.textfield.TextInputLayout>
+                android:layout_marginTop="8dp"
+                android:clipToPadding="false"
+                android:orientation="horizontal"
+                app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager"
+                tools:listitem="@layout/item_media" />
 
             <CheckBox
                 android:id="@+id/opt_video"
@@ -146,7 +105,6 @@
         android:orientation="horizontal"
         android:padding="16dp">
 
-        <!-- Why Save is greyed out, when it is -->
         <TextView
             android:id="@+id/save_hint"
             android:layout_width="0dp"
@@ -169,6 +127,6 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginStart="12dp"
-            android:text="@string/save_and_capture" />
+            android:text="@string/open_camera" />
     </LinearLayout>
 </LinearLayout>

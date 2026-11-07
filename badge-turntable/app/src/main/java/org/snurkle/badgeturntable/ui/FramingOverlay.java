@@ -22,7 +22,7 @@ import org.snurkle.badgeturntable.ring.RingReading;
  */
 public final class FramingOverlay extends View {
     /** Where the ring should sit, as fractions of the frame: left, top, right, bottom. */
-    static final RectF RING_ZONE = new RectF(0.12f, 0.68f, 0.88f, 0.96f);
+    static final RectF RING_ZONE = new RectF(0.12f, 0.72f, 0.88f, 1.0f);
     /** Enough markers for a strong fit (RingDetector.STRONG_MARKERS). */
     private static final int GOOD_MARKERS = 8;
     /** The axis counts as centred within this fraction of the frame width. */

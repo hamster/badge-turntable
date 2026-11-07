@@ -46,11 +46,20 @@ public final class JobRunner {
         listeners.remove(l);
     }
 
+    /** A job started on the phone that makes no files. */
     public Job start(Job.Kind kind, JSONObject params, Body body) throws ApiException {
+        return start(kind, Job.PHONE, null, params, body);
+    }
+
+    /**
+     * @param source {@link Job#PHONE} or {@link Job#EDITOR}
+     * @param target where its files go ({@link Job#target}); null for none
+     */
+    public Job start(Job.Kind kind, String source, JSONObject target, JSONObject params, Body body) throws ApiException {
         Job job;
         synchronized (this) {
             if (current != null) throw ApiException.busy(current);
-            job = new Job(this, idPrefix + (++jobN), kind, params);
+            job = new Job(this, idPrefix + (++jobN), kind, source, target, params);
             current = job;
         }
         changed(job);
@@ -112,8 +121,16 @@ public final class JobRunner {
         return current != null ? current : last;
     }
 
-    /** Answers the running job's prompt. The first answer wins; later ones get prompt_gone. */
+    /** Answers the running job's prompt from the phone. */
     public Job answer(String promptId, String answer) throws ApiException {
+        return answer(promptId, answer, Job.PHONE);
+    }
+
+    /**
+     * Answers the running job's prompt. The first answer wins; later ones get prompt_gone.
+     * @param by who answered, recorded as stoppedBy when the answer is stop
+     */
+    public Job answer(String promptId, String answer, String by) throws ApiException {
         Job job = current();
         if (job == null) throw new ApiException(409, "no_job", "Nothing is running.");
         Job.Prompt p = job.prompt();
@@ -126,14 +143,24 @@ public final class JobRunner {
         if (!job.answer(promptId, answer)) {
             throw new ApiException(409, "prompt_gone", "That question was already answered.");
         }
+        if ("stop".equals(answer)) job.setStoppedBy(by);
         changed(job);
         return job;
     }
 
-    /** Asks the running job to stop. It may still be winding down when this returns. */
+    /** Stop on the phone. */
     public Job abort() throws ApiException {
+        return abort(Job.PHONE);
+    }
+
+    /**
+     * Asks the running job to stop. It may still be winding down when this returns.
+     * @param by who stopped it
+     */
+    public Job abort(String by) throws ApiException {
         Job job = current();
         if (job == null) throw new ApiException(409, "no_job", "Nothing is running.");
+        job.setStoppedBy(by);
         job.abortRequested = true;
         synchronized (job) {
             if (job.thread != null) job.thread.interrupt();

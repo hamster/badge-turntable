@@ -1,57 +1,67 @@
 package org.snurkle.badgeturntable.ui;
 
 import android.content.Intent;
+import android.net.Uri;
 import android.os.Bundle;
 import android.text.Editable;
 import android.text.TextWatcher;
-import android.widget.ArrayAdapter;
+import android.view.View;
+import android.widget.Button;
 import android.widget.CheckBox;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.content.FileProvider;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
 
 import com.google.android.material.appbar.MaterialToolbar;
-import com.google.android.material.textfield.MaterialAutoCompleteTextView;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.textfield.TextInputEditText;
-import com.google.android.material.textfield.TextInputLayout;
 
-import androidx.preference.PreferenceManager;
-
+import org.snurkle.badgeturntable.App;
 import org.snurkle.badgeturntable.R;
 import org.snurkle.badgeturntable.ir.IrTransmitter;
 import org.snurkle.badgeturntable.ir.Presets;
 import org.snurkle.badgeturntable.ir.TurntableProfile;
-import org.snurkle.badgeturntable.session.BadgeIds;
+import org.snurkle.badgeturntable.jobs.Job;
+import org.snurkle.badgeturntable.rig.Station;
 import org.snurkle.badgeturntable.session.Session;
 import org.snurkle.badgeturntable.session.SessionStore;
-import org.snurkle.badgeturntable.session.Slugs;
-import org.snurkle.badgeturntable.sync.KnownBadgeIds;
 
 import java.io.File;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.io.IOException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/** Badge identity and session options. New sessions get a suggested, non-colliding badge ID. */
-public final class SessionEditActivity extends AppCompatActivity {
+/**
+ * A session: its name, notes and options, and the strip of what's been captured, which can
+ * be viewed and deleted (Spec.md, Session screen). Save, or Open camera, which saves and
+ * opens the Capture screen with this session open (without starting a capture).
+ */
+public final class SessionEditActivity extends AppCompatActivity implements SessionStore.Listener {
     public static final String EXTRA_ID = "session_id";
 
     private final ExecutorService io = Executors.newSingleThreadExecutor();
+    /** Thumbnail decoding, kept off {@link #io} so a save never waits behind it. */
+    private final ExecutorService thumbs = Executors.newFixedThreadPool(2);
+    private Station station;
     private SessionStore store;
+    /** The session as last loaded; null until then. A new one isn't saved until Save. */
     private Session session;
-    private Map<String, String> knownIds = new HashMap<>();
+    private boolean isNew;
 
-    private TextInputEditText title, year, group, event, slug, badgeId;
-    private TextInputLayout badgeIdLayout;
-    private MaterialAutoCompleteTextView con;
+    private TextInputEditText name, notes;
     private CheckBox video, auto;
-    private android.widget.Button saveButton, captureButton;
-    private android.widget.TextView saveHint;
+    private Button saveButton, cameraButton;
+    private TextView saveHint, mediaEmpty;
+    private RecyclerView mediaList;
+    private MediaAdapter mediaAdapter;
+    private RemoteBanner banner;
+
     /** Null if this phone can drive the turntable; otherwise why not. */
     private Integer autoUnavailable;
-    private boolean updatingSlug;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -61,29 +71,41 @@ public final class SessionEditActivity extends AppCompatActivity {
         setSupportActionBar(toolbar);
         toolbar.setNavigationOnClickListener(v -> finish());
 
-        store = new SessionStore(this);
-        title = findViewById(R.id.title);
-        year = findViewById(R.id.year);
-        group = findViewById(R.id.group);
-        event = findViewById(R.id.event);
-        slug = findViewById(R.id.slug);
-        badgeId = findViewById(R.id.badge_id);
-        badgeIdLayout = findViewById(R.id.badge_id_layout);
-        con = findViewById(R.id.con);
+        station = App.station(this);
+        store = station.sessions;
+        banner = new RemoteBanner(this, findViewById(R.id.remote_banner));
+        name = findViewById(R.id.title);
+        notes = findViewById(R.id.notes);
         video = findViewById(R.id.opt_video);
         auto = findViewById(R.id.opt_auto);
         saveButton = findViewById(R.id.save);
-        captureButton = findViewById(R.id.capture);
+        cameraButton = findViewById(R.id.capture);
         saveHint = findViewById(R.id.save_hint);
+        mediaList = findViewById(R.id.media_list);
+        mediaEmpty = findViewById(R.id.media_empty);
+
+        mediaList.setLayoutManager(new LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false));
+        mediaAdapter = new MediaAdapter(store, thumbs, new MediaAdapter.Actions() {
+            @Override
+            public void open(Session.Media media, File file) {
+                openMedia(media, file);
+            }
+
+            @Override
+            public void delete(Session.Media media) {
+                confirmDelete(media);
+            }
+        });
+        mediaList.setAdapter(mediaAdapter);
 
         saveButton.setOnClickListener(v -> save(false));
-        captureButton.setOnClickListener(v -> save(true));
+        cameraButton.setOnClickListener(v -> save(true));
         saveButton.setEnabled(false);
-        captureButton.setEnabled(false);
+        cameraButton.setEnabled(false);
+        name.addTextChangedListener(new SimpleWatcher(this::checkSavable));
 
         // Automatic turntable needs an IR blaster and a profile with a remote.
-        TurntableProfile profile = Presets.byId(this, PreferenceManager.getDefaultSharedPreferences(this)
-                .getString("turntable_model", Presets.JAYEGT_574));
+        TurntableProfile profile = Presets.byId(this, station.prefs.getString("turntable_model", Presets.JAYEGT_574));
         if (!new IrTransmitter(this).available()) autoUnavailable = R.string.opt_auto_no_ir;
         else if (!profile.supportsAuto()) autoUnavailable = R.string.opt_auto_no_remote;
         if (autoUnavailable != null) {
@@ -92,115 +114,149 @@ public final class SessionEditActivity extends AppCompatActivity {
         }
 
         String id = getIntent().getStringExtra(EXTRA_ID);
+        isNew = id == null;
+        setTitle(isNew ? R.string.new_session : R.string.edit_session);
         io.execute(() -> {
-            Session s = id == null ? store.newSession() : store.get(id);
-            List<String> cons = store.conChoices();
-            Map<String, String> ids = KnownBadgeIds.all(this);
-            runOnUiThread(() -> bind(s, cons, ids, id == null));
+            Session s = isNew ? store.newSession("", "") : store.get(id);
+            runOnUiThread(() -> {
+                if (s == null) {
+                    Toast.makeText(this, R.string.session_deleted, Toast.LENGTH_SHORT).show();
+                    finish();
+                    return;
+                }
+                bindFields(s);
+                showMedia(s);
+            });
+        });
+    }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        banner.start();
+        store.addListener(this);
+    }
+
+    @Override
+    protected void onStop() {
+        store.removeListener(this);
+        banner.stop();
+        super.onStop();
+    }
+
+    private void bindFields(Session s) {
+        session = s;
+        name.setText(s.name);
+        notes.setText(s.notes);
+        video.setChecked(s.captureVideo);
+        auto.setChecked(s.autoMode && autoUnavailable == null);
+        checkSavable();
+    }
+
+    private void showMedia(Session s) {
+        boolean empty = s.media.isEmpty();
+        mediaEmpty.setVisibility(empty ? View.VISIBLE : View.GONE);
+        mediaList.setVisibility(empty ? View.GONE : View.VISIBLE);
+        mediaAdapter.submit(s);
+    }
+
+    // ---- Changes from elsewhere (a capture, the editor) --------------------------------
+
+    @Override
+    public void onSessionChanged(Session s) {
+        // Files come and go with captures and the editor; the fields being typed in are left alone.
+        if (session != null && s.id.equals(session.id)) runOnUiThread(() -> showMedia(s));
+    }
+
+    @Override
+    public void onSessionRemoved(String id) {
+        if (session != null && id.equals(session.id)) {
+            runOnUiThread(() -> {
+                Toast.makeText(this, R.string.session_deleted, Toast.LENGTH_LONG).show();
+                finish();
+            });
+        }
+    }
+
+    // ---- Media ---------------------------------------------------------------------------
+
+    private void openMedia(Session.Media m, File file) {
+        if (file == null || !file.isFile()) {
+            Toast.makeText(this, R.string.media_missing, Toast.LENGTH_SHORT).show();
+            return;
+        }
+        try {
+            Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", file);
+            String mime = m.kind == Session.Media.Kind.VIDEO ? "video/*" : "image/*";
+            startActivity(new Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime)
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION));
+        } catch (Exception e) {
+            Toast.makeText(this, getString(R.string.media_open_failed, e.getMessage()), Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void confirmDelete(Session.Media m) {
+        if (session == null || isNew) return;
+        String label = m.caption != null && !m.caption.isEmpty() ? m.caption : m.filename;
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(getString(R.string.media_delete_title, label))
+                .setMessage(R.string.media_delete_message)
+                .setPositiveButton(R.string.delete, (d, w) -> deleteMedia(m))
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    private void deleteMedia(Session.Media m) {
+        String id = session.id;
+        Job running = station.jobs.current();
+        if (running != null && id.equals(running.targetSessionId())) {
+            Toast.makeText(this, getString(R.string.delete_session_busy, session.name), Toast.LENGTH_LONG).show();
+            return;
+        }
+        io.execute(() -> {
             try {
-                KnownBadgeIds.refreshFromSite(this);  // best effort; cached for next time
-                Map<String, String> fresh = KnownBadgeIds.all(this);
-                runOnUiThread(() -> {
-                    knownIds = fresh;
-                    checkBadgeId();
-                });
-            } catch (Exception ignored) {
+                store.deleteFile(id, m.filename);  // the store's listener refreshes the strip
+            } catch (IOException e) {
+                runOnUiThread(() -> Toast.makeText(this, e.getMessage(), Toast.LENGTH_LONG).show());
             }
         });
     }
 
-    private void bind(Session s, List<String> cons, Map<String, String> ids, boolean isNew) {
-        session = s;
-        knownIds = ids;
-        setTitle(isNew ? R.string.new_session : R.string.edit_session);
-        con.setSimpleItems(cons.toArray(new String[0]));
-        title.setText(s.title);
-        con.setText(s.con, false);
-        year.setText(s.year > 0 ? String.valueOf(s.year) : "");
-        group.setText(s.group);
-        event.setText(s.event);
-        slug.setText(s.effectiveSlug());
-        video.setChecked(s.captureVideo);
-        auto.setChecked(s.autoMode && autoUnavailable == null);
-        if (isNew) {
-            String suggestion = BadgeIds.suggestNext(ids.keySet());
-            badgeId.setText(suggestion == null ? "" : suggestion);
-        } else {
-            badgeId.setText(s.badgeId);
-        }
+    // ---- Saving ----------------------------------------------------------------------------
 
-        TextWatcher regen = new SimpleWatcher(() -> {
-            if (session.slugEdited) return;
-            updatingSlug = true;
-            slug.setText(Slugs.make(text(group), text(title), parseYear()));
-            updatingSlug = false;
-        });
-        title.addTextChangedListener(regen);
-        title.addTextChangedListener(new SimpleWatcher(this::checkSavable));
-        group.addTextChangedListener(regen);
-        year.addTextChangedListener(regen);
-        slug.addTextChangedListener(new SimpleWatcher(() -> {
-            if (!updatingSlug) session.slugEdited = true;
-        }));
-        badgeId.addTextChangedListener(new SimpleWatcher(this::checkBadgeId));
-        checkBadgeId();
-    }
-
-    /** Save needs a title and a badge ID that's valid or blank; the hint says which is missing. */
     private void checkSavable() {
         if (session == null) return;
-        Integer why = null;
-        if (text(title).isEmpty()) why = R.string.title_required;
-        else if (!text(badgeId).isEmpty() && BadgeIds.normalize(text(badgeId)) == null) why = R.string.badge_id_fix;
-        saveButton.setEnabled(why == null);
-        captureButton.setEnabled(why == null);
-        saveHint.setText(why == null ? "" : getString(why));
+        boolean canSave = !text(name).isEmpty();
+        saveButton.setEnabled(canSave);
+        cameraButton.setEnabled(canSave);
+        saveHint.setText(canSave ? "" : getString(R.string.title_required));
     }
 
-    private void checkBadgeId() {
-        if (session == null) return;
-        checkSavable();
-        String raw = text(badgeId);
-        if (raw.isEmpty()) {
-            badgeIdLayout.setError(null);
-            badgeIdLayout.setHelperText(getString(R.string.badge_id_blank));
-            return;
-        }
-        String id = BadgeIds.normalize(raw);
-        if (id == null) {
-            badgeIdLayout.setError(getString(R.string.badge_id_invalid));
-            return;
-        }
-        String owner = knownIds.get(id);
-        if (owner != null && !owner.equals(session.effectiveSlug())) {
-            badgeIdLayout.setError(getString(R.string.badge_id_taken, id, owner));
-        } else {
-            badgeIdLayout.setError(null);
-            badgeIdLayout.setHelperText(getString(R.string.badge_id_ok));
-        }
-    }
-
-    private void save(boolean thenCapture) {
+    /** Saves name, notes and options (not the media list, which captures may be changing). */
+    private void save(boolean thenCamera) {
         if (session == null || !saveButton.isEnabled()) return;
-        session.title = text(title);
-        session.con = text(con).isEmpty() ? "defcon" : text(con);
-        session.year = parseYear();
-        session.group = text(group);
-        session.event = text(event);
-        session.slug = Slugs.kebab(text(slug));
-        String id = BadgeIds.normalize(text(badgeId));
-        session.badgeId = id == null ? "" : id;
-        session.captureVideo = video.isChecked();
-        if (autoUnavailable == null) session.autoMode = auto.isChecked();
-        session.markChanged();
-
+        String n = text(name), t = text(notes);
+        boolean v = video.isChecked();
+        Boolean a = autoUnavailable == null ? auto.isChecked() : null;
         Session s = session;
         io.execute(() -> {
             try {
-                store.save(s);
-                if (new File(store.badgeDir(s), "index.md").isFile()) store.writeIndex(s);
+                if (isNew) {
+                    s.name = n;
+                    s.notes = t;
+                    s.captureVideo = v;
+                    if (a != null) s.autoMode = a;
+                    store.save(s);
+                } else if (store.update(s.id, x -> {
+                    x.name = n;
+                    x.notes = t;
+                    x.captureVideo = v;
+                    if (a != null) x.autoMode = a;
+                }) == null) {
+                    throw new IOException(getString(R.string.session_deleted));
+                }
                 runOnUiThread(() -> {
-                    if (thenCapture) {
+                    if (thenCamera) {
                         startActivity(new Intent(this, CaptureActivity.class).putExtra(EXTRA_ID, s.id));
                     }
                     finish();
@@ -211,21 +267,14 @@ public final class SessionEditActivity extends AppCompatActivity {
         });
     }
 
-    private int parseYear() {
-        try {
-            return Integer.parseInt(text(year));
-        } catch (NumberFormatException e) {
-            return 0;
-        }
-    }
-
-    private static String text(android.widget.TextView v) {
+    private static String text(TextView v) {
         return v.getText() == null ? "" : v.getText().toString().trim();
     }
 
     @Override
     protected void onDestroy() {
         io.shutdown();
+        thumbs.shutdownNow();
         super.onDestroy();
     }
 

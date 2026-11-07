@@ -41,6 +41,7 @@
         <activity
             android:name=".ui.CaptureActivity"
             android:configChanges="orientation|screenSize|screenLayout"
+            android:launchMode="singleTop"
             android:screenOrientation="sensorLandscape"
             android:theme="@style/Theme.BadgeTurntable.Capture" />
 
@@ -50,5 +51,15 @@
         <activity
             android:name=".ui.ProbeActivity"
             android:screenOrientation="sensorLandscape" />
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 </manifest>

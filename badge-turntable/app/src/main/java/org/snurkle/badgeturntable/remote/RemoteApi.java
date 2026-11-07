@@ -2,6 +2,7 @@ package org.snurkle.badgeturntable.remote;
 
 import android.util.Log;
 
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 import org.snurkle.badgeturntable.camera.CameraController;
@@ -10,6 +11,8 @@ import org.snurkle.badgeturntable.jobs.ApiException;
 import org.snurkle.badgeturntable.jobs.Job;
 import org.snurkle.badgeturntable.jobs.Json;
 import org.snurkle.badgeturntable.rig.Rig;
+import org.snurkle.badgeturntable.rig.Station;
+import org.snurkle.badgeturntable.session.Session;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -29,14 +32,16 @@ import java.util.regex.Pattern;
 final class RemoteApi implements HttpServer.Handler {
     private static final String TAG = "RemoteApi";
     private static final Pattern SHOT = Pattern.compile("/api/shots/([^/]+)");
+    private static final Pattern SESSION = Pattern.compile("/api/sessions/([^/]+)");
+    private static final Pattern SESSION_FILE = Pattern.compile("/api/sessions/([^/]+)/media/([^/]+)");
     private static final List<String> MODES = Arrays.asList("auto", "manual");
 
     private final RemoteServer server;
-    private final Rig rig;
+    private final Station station;
 
     RemoteApi(RemoteServer server) {
         this.server = server;
-        this.rig = server.rig;
+        this.station = server.station;
     }
 
     @Override
@@ -107,80 +112,193 @@ final class RemoteApi implements HttpServer.Handler {
         requireAuth(req);
 
         Matcher shot = SHOT.matcher(path);
+        Matcher sessionFile = SESSION_FILE.matcher(path);
+        Matcher session = SESSION.matcher(path);
         switch (path) {
             case "/api/status":
                 if (m.equals("GET")) return ok(server.status());
                 break;
             case "/api/camera":
-                if (m.equals("GET")) return ok(Json.obj("capabilities", rig.cameraCapabilitiesJson(), "settings", rig.cameraSettingsJson()));
-                if (m.equals("POST")) return ok(setCamera(body));
+                if (m.equals("GET")) {
+                    Rig rig = station.requireRig();
+                    return ok(Json.obj("capabilities", rig.cameraCapabilitiesJson(), "settings", rig.cameraSettingsJson()));
+                }
+                if (m.equals("POST")) return ok(setCamera(station.requireRig(), body));
+                break;
+            case "/api/camera/open":
+                if (m.equals("POST")) {
+                    station.openCamera();
+                    return ok(Json.obj("cameraOpen", true));
+                }
                 break;
             case "/api/camera/focus":
-                if (m.equals("POST")) return ok(focus(body));
+                if (m.equals("POST")) return ok(focus(station.requireRig(), body));
                 break;
             case "/api/turntable/press":
                 if (m.equals("POST")) {
                     String role = body.optString("role", "");
-                    rig.press(role);
+                    station.rigOrIdle().press(role);
                     return ok(Json.obj("role", role));
                 }
                 break;
             case "/api/turntable/move":
-                if (m.equals("POST")) return accepted(move(body));
+                if (m.equals("POST")) return accepted(move(station.requireRig(), body));
                 break;
             case "/api/turntable/front":
-                if (m.equals("POST")) return ok(Json.obj("frontRingDeg", Json.deg(rig.setFront())));
+                if (m.equals("POST")) return ok(Json.obj("frontRingDeg", Json.deg(station.requireRig().setFront())));
                 break;
             case "/api/calibrate":
-                if (m.equals("POST")) return accepted(rig.startCalibrate());
+                if (m.equals("POST")) return accepted(station.requireRig().startCalibrate(Job.EDITOR));
                 break;
             case "/api/capture":
                 if (m.equals("POST")) {
+                    Rig rig = station.requireRig();
                     boolean stills = !Boolean.FALSE.equals(body.opt("stills"));
                     boolean video = !Boolean.FALSE.equals(body.opt("video"));
                     boolean auto = !Boolean.FALSE.equals(body.opt("auto"));
                     String setLabel = body.isNull("setLabel") ? null : body.optString("setLabel", "").trim();
-                    return accepted(rig.startCapture(null, auto, stills, video,
+                    return accepted(rig.startCapture(Job.EDITOR, auto, stills, video,
                             setLabel == null || setLabel.isEmpty() ? null : setLabel));
                 }
                 break;
             case "/api/extra":
-                if (m.equals("POST")) return accepted(extra(body));
+                if (m.equals("POST")) return accepted(extra(station.requireRig(), body));
+                break;
+            case "/api/target":
+                if (m.equals("GET")) return ok(Json.obj("target", station.target().toJson()));
+                if (m.equals("POST")) return ok(Json.obj("target", setTarget(body).toJson()));
                 break;
             case "/api/jobs/current":
                 if (m.equals("GET")) {
-                    Job j = rig.jobs.currentOrLast();
+                    Job j = station.jobs.currentOrLast();
                     return ok(Json.obj("job", j == null ? null : j.toJson()));
                 }
-                if (m.equals("DELETE")) return ok(Json.obj("job", rig.jobs.abort().toJson()));
+                if (m.equals("DELETE")) return ok(Json.obj("job", station.jobs.abort(Job.EDITOR).toJson()));
                 break;
             case "/api/jobs/current/answer":
                 if (m.equals("POST")) {
-                    Job j = rig.jobs.answer(body.optString("promptId"), body.optString("answer"));
+                    Job j = station.jobs.answer(body.optString("promptId"), body.optString("answer"), Job.EDITOR);
                     return ok(Json.obj("job", j.toJson()));
                 }
                 break;
             case "/api/shots":
-                if (m.equals("GET")) return ok(Json.obj("shots", Json.arr(rig.shots.list())));
+                if (m.equals("GET")) return ok(Json.obj("shots", Json.arr(station.shots.list())));
                 if (m.equals("DELETE")) {
-                    Job running = rig.jobs.current();
+                    Job running = station.jobs.current();
                     if (running != null) throw ApiException.busy(running);
-                    return ok(Json.obj("deleted", rig.shots.deleteAll()));
+                    return ok(Json.obj("deleted", station.shots.deleteAll()));
                 }
                 break;
             case "/api/session.json":
                 if (m.equals("GET")) return ok(server.sessionJson());
                 break;
+            case "/api/sessions":
+                if (m.equals("GET")) {
+                    JSONArray list = new JSONArray();
+                    for (Session s : station.sessions.list()) list.put(server.sessionSummary(s));
+                    return ok(Json.obj("sessions", list));
+                }
+                break;
             default:
                 if (shot.matches()) return shotRoute(m, shot.group(1), req.query.get("variant"));
+                if (sessionFile.matches()) {
+                    return sessionFileRoute(m, sessionFile.group(1), decode(sessionFile.group(2)), req.query.get("variant"));
+                }
+                if (session.matches()) return sessionRoute(m, session.group(1));
                 throw notFound("No such endpoint.");
         }
         throw methodNotAllowed(m);
     }
 
+    // ---- Target and sessions ---------------------------------------------------------
+
+    /** {"session": id} joins that session; {"shots": true} starts a new unnamed set. */
+    private Station.Target setTarget(JSONObject body) throws ApiException {
+        if (body.has("session") && !body.isNull("session")) return station.openSession(body.optString("session"), Job.EDITOR);
+        if (Boolean.TRUE.equals(body.opt("shots"))) return station.openShots(Job.EDITOR);
+        throw ApiException.badRequest("session", "Give session (an ID to join) or shots: true (a new set).");
+    }
+
+    private Session requireSession(String id) throws ApiException {
+        Session s = station.sessions.get(id);
+        if (s == null) throw notFound("No such session.");
+        return s;
+    }
+
+    /** 409 busy if the running job writes into this session. */
+    private void checkNotWriting(String sessionId) throws ApiException {
+        Job running = station.jobs.current();
+        if (running != null && sessionId.equals(running.targetSessionId())) throw ApiException.busy(running);
+    }
+
+    private HttpServer.Response sessionRoute(String method, String id) throws ApiException {
+        Session s = requireSession(id);
+        if (method.equals("GET")) return ok(server.sessionDetail(s));
+        if (method.equals("DELETE")) {
+            checkNotWriting(id);
+            Station.Target t = station.target();
+            if (t.isSession() && id.equals(t.sessionId)) {
+                throw new ApiException(409, "session_open", s.name + " is open on the phone. Close it there first.")
+                        .with("sessionId", id);
+            }
+            station.sessions.delete(s);
+            return HttpServer.Response.empty(204);
+        }
+        throw methodNotAllowed(method);
+    }
+
+    private HttpServer.Response sessionFileRoute(String method, String id, String filename, String variantParam)
+            throws ApiException, IOException {
+        Session s = requireSession(id);
+        if (s.find(filename) == null) throw notFound("That session has no such file.");
+        if (method.equals("DELETE")) {
+            checkNotWriting(id);
+            if (!station.sessions.deleteFile(id, filename)) throw notFound("That session has no such file.");
+            return HttpServer.Response.empty(204);
+        }
+        if (!method.equals("GET")) throw methodNotAllowed(method);
+        String variant = variant(variantParam);
+        File f;
+        String mime, name;
+        if (variant.equals("thumb")) {
+            f = station.sessions.thumb(s, filename);
+            mime = "image/jpeg";
+            name = stem(filename) + "-thumb.jpg";
+        } else {
+            f = station.sessions.file(s, filename);
+            mime = filename.endsWith(".mp4") ? "video/mp4" : "image/jpeg";
+            name = filename;
+        }
+        if (f == null || !f.isFile()) throw notFound("That file is missing on the phone.");
+        return HttpServer.Response.stream(200, mime, new FileInputStream(f), f.length())
+                .header("Content-Disposition", "attachment; filename=\"" + name + "\"")
+                .header("X-Shot-Filename", name);
+    }
+
+    /** "web" (default) or "thumb"; "original" is 404, since the phone keeps only web copies. */
+    private static String variant(String param) throws ApiException {
+        String v = param == null ? "web" : param;
+        if (v.equals("original")) throw notFound("The phone keeps only the web copy.");
+        if (!v.equals("web") && !v.equals("thumb")) throw ApiException.badRequest("variant", "variant is web or thumb.");
+        return v;
+    }
+
+    private static String stem(String filename) {
+        int dot = filename.lastIndexOf('.');
+        return dot < 0 ? filename : filename.substring(0, dot);
+    }
+
+    private static String decode(String s) throws ApiException {
+        try {
+            return java.net.URLDecoder.decode(s.replace("+", "%2B"), "UTF-8");
+        } catch (Exception e) {
+            throw ApiException.badRequest(null, "Bad file name.");
+        }
+    }
+
     // ---- Routes with more to them --------------------------------------------------
 
-    private JSONObject setCamera(JSONObject body) throws Exception {
+    private JSONObject setCamera(Rig rig, JSONObject body) throws Exception {
         Job running = rig.jobs.current();
         if (running != null && running.kind != Job.Kind.MOVE) {
             throw new ApiException(409, "busy", "The camera is locked while " + running.kindLabel().toLowerCase(Locale.ROOT)
@@ -261,7 +379,7 @@ final class RemoteApi implements HttpServer.Handler {
     }
 
     /** Focus (only) held at a clicked point, or {"clear": true} to go back to continuous AF. */
-    private JSONObject focus(JSONObject body) throws Exception {
+    private JSONObject focus(Rig rig, JSONObject body) throws Exception {
         boolean clear = Boolean.TRUE.equals(body.opt("clear"));
         double x = clear ? 0 : number(body, "x", 0, 1), y = clear ? 0 : number(body, "y", 0, 1);
         Job running = rig.jobs.current();
@@ -282,45 +400,43 @@ final class RemoteApi implements HttpServer.Handler {
         return Json.obj("settings", rig.cameraSettingsJson());
     }
 
-    private Job move(JSONObject body) throws ApiException {
-        if (body.optBoolean("home", false)) return rig.startMove(null, null, true);
-        if (body.has("to")) return rig.startMove(null, number(body, "to", 0, 360), false);
-        if (body.has("by")) return rig.startMove(number(body, "by", -360, 360), null, false);
+    private Job move(Rig rig, JSONObject body) throws ApiException {
+        if (body.optBoolean("home", false)) return rig.startMove(Job.EDITOR, null, null, true);
+        if (body.has("to")) return rig.startMove(Job.EDITOR, null, number(body, "to", 0, 360), false);
+        if (body.has("by")) return rig.startMove(Job.EDITOR, number(body, "by", -360, 360), null, false);
         throw ApiException.badRequest(null, "Give by, to or home.");
     }
 
-    private Job extra(JSONObject body) throws ApiException {
+    private Job extra(Rig rig, JSONObject body) throws ApiException {
         String label = body.optString("label", "").trim();
         if (label.isEmpty() || label.length() > 60) {
             throw ApiException.badRequest("label", "Give the extra shot a label (up to 60 characters).");
         }
         long delay = body.has("delayMs")
                 ? Math.round(number(body, "delayMs", 0, 10000))
-                : Rig.parseInt(rig.prefs.getString("manual_delay_ms", "2000"), 2000);
-        return rig.startExtra(null, label, delay);
+                : Rig.parseInt(station.prefs.getString("manual_delay_ms", "2000"), 2000);
+        return rig.startExtra(Job.EDITOR, label, delay);
     }
 
     private HttpServer.Response shotRoute(String method, String id, String variantParam) throws ApiException, IOException {
         if (method.equals("DELETE")) {
-            Job running = rig.jobs.current();
+            Job running = station.jobs.current();
             if (running != null && running.shotIds().contains(id)) {
                 throw new ApiException(409, "busy", "That shot belongs to the running job.").with("jobId", running.id);
             }
-            if (!rig.shots.delete(id)) throw notFound("No such shot.");
+            if (!station.shots.delete(id)) throw notFound("No such shot.");
             return HttpServer.Response.empty(204);
         }
         if (!method.equals("GET")) throw methodNotAllowed(method);
-        String variant = variantParam == null ? "web" : variantParam;
-        if (!Arrays.asList("web", "original", "thumb").contains(variant)) {
-            throw ApiException.badRequest("variant", "variant is web, original or thumb.");
-        }
-        File f = rig.shots.file(id, variant);
+        if (station.shots.json(id) == null) throw notFound("No such shot.");
+        String variant = variant(variantParam);
+        File f = station.shots.file(id, variant);
         if (f == null) throw notFound("No such shot.");
-        if (!variant.equals("thumb") && !rig.shots.ready(id)) {
+        if (!variant.equals("thumb") && !station.shots.ready(id)) {
             throw new ApiException(409, "not_ready", "The spin video is still being encoded.");
         }
         if (!f.isFile()) throw notFound("That file is missing on the phone.");
-        String[] mimeName = rig.shots.mimeAndName(id, variant);
+        String[] mimeName = station.shots.mimeAndName(id, variant);
         if (mimeName == null) throw notFound("No such shot.");
         return HttpServer.Response.stream(200, mimeName[0], new FileInputStream(f), f.length())
                 .header("Content-Disposition", "attachment; filename=\"" + mimeName[1] + "\"")

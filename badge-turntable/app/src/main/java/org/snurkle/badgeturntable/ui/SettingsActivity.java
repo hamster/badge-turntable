@@ -21,9 +21,6 @@ import org.snurkle.badgeturntable.ir.TurntableProfile;
 import org.snurkle.badgeturntable.motion.Calibration;
 import org.snurkle.badgeturntable.remote.Pairing;
 import org.snurkle.badgeturntable.remote.RemoteServer;
-import org.snurkle.badgeturntable.sync.SecretStore;
-import org.snurkle.badgeturntable.sync.SmbClient;
-import org.snurkle.badgeturntable.sync.SmbSettings;
 
 import java.text.DateFormat;
 import java.util.Date;
@@ -34,6 +31,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public final class SettingsActivity extends AppCompatActivity {
+    private RemoteBanner banner;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -42,9 +40,22 @@ public final class SettingsActivity extends AppCompatActivity {
         MaterialToolbar toolbar = findViewById(R.id.toolbar);
         setSupportActionBar(toolbar);
         toolbar.setNavigationOnClickListener(v -> finish());
+        banner = new RemoteBanner(this, findViewById(R.id.remote_banner));
         if (savedInstanceState == null) {
             getSupportFragmentManager().beginTransaction().replace(R.id.settings, new SettingsFragment()).commit();
         }
+    }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        banner.start();
+    }
+
+    @Override
+    protected void onStop() {
+        banner.stop();
+        super.onStop();
     }
 
     public static final class SettingsFragment extends PreferenceFragmentCompat {
@@ -60,43 +71,10 @@ public final class SettingsActivity extends AppCompatActivity {
         @Override
         public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
             setPreferencesFromResource(R.xml.preferences, rootKey);
-            SecretStore secrets = new SecretStore(requireContext());
 
-            // The password is never stored in plain preferences: it goes to the Keystore-backed store.
-            EditTextPreference password = findPreference("smb_password_input");
-            if (password != null) {
-                password.setOnBindEditTextListener(e ->
-                        e.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD));
-                password.setSummary(secrets.get(SmbSettings.SECRET_PASSWORD) == null ? R.string.password_not_set : R.string.set);
-                password.setOnPreferenceChangeListener((p, value) -> {
-                    secrets.put(SmbSettings.SECRET_PASSWORD, value.toString());
-                    p.setSummary(R.string.set);
-                    return false;  // don't persist the plain text
-                });
-            }
-
-            EditTextPreference port = findPreference(SmbSettings.KEY_PORT);
-            if (port != null) port.setOnBindEditTextListener(e -> e.setInputType(InputType.TYPE_CLASS_NUMBER));
             EditTextPreference remotePort = findPreference("remote_port");
             if (remotePort != null) remotePort.setOnBindEditTextListener(e -> e.setInputType(InputType.TYPE_CLASS_NUMBER));
             populatePaired();
-
-            Preference test = findPreference("smb_test");
-            if (test != null) test.setOnPreferenceClickListener(p -> {
-                p.setSummary(R.string.testing);
-                Executors.newSingleThreadExecutor().execute(() -> {
-                    List<String> lines = SmbClient.test(SmbSettings.load(requireContext()));
-                    requireActivity().runOnUiThread(() -> {
-                        p.setSummary(null);
-                        new MaterialAlertDialogBuilder(requireContext())
-                                .setTitle(R.string.smb_test)
-                                .setMessage(String.join("\n", lines))
-                                .setPositiveButton(android.R.string.ok, null)
-                                .show();
-                    });
-                });
-                return true;
-            });
 
             Preference cal = findPreference("calibration");
             if (cal != null) {

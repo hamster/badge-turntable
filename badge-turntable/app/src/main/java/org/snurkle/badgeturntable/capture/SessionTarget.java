@@ -1,5 +1,6 @@
 package org.snurkle.badgeturntable.capture;
 
+import org.snurkle.badgeturntable.jobs.Job;
 import org.snurkle.badgeturntable.session.Session;
 import org.snurkle.badgeturntable.session.SessionStore;
 
@@ -9,45 +10,43 @@ import java.util.HashSet;
 import java.util.Set;
 
 /**
- * Captures into a badge session: _badges/ and _capture/ folders and index.md. Syncing to
- * Samba is manual (the Sessions screen), so a capture only marks a synced badge as changed.
+ * Captures into a session: its web copies go in the session's folder, and session.json is
+ * updated after each file, so whatever was captured survives a stop or a switch of session.
+ * A spin shows up once it's transcoded.
  */
 public final class SessionTarget implements CaptureTarget {
     private final SessionStore store;
-    public final Session session;
+    private final String sessionId;
+    private final Job job;
 
-    public SessionTarget(SessionStore store, Session session) {
+    /** @param job the job writing, told each file's name; may be null */
+    public SessionTarget(SessionStore store, String sessionId, Job job) {
         this.store = store;
-        this.session = session;
+        this.sessionId = sessionId;
+        this.job = job;
     }
 
     @Override
-    public File originalFile(String filename) {
-        return new File(store.originalsDir(session), filename);
+    public File scratchFile(String filename) {
+        return new File(store.scratchDir(), filename);
     }
 
     @Override
     public File webFile(String filename) {
-        return new File(store.badgeDir(session), filename);
+        return store.file(sessionId, filename);
     }
 
     @Override
     public Set<String> filenames() {
         Set<String> taken = new HashSet<>();
-        for (Session.Media m : session.media) taken.add(m.filename);
+        Session s = store.get(sessionId);
+        if (s != null) for (Session.Media m : s.media) taken.add(m.filename);
         return taken;
     }
 
     @Override
     public void add(Session.Media m) throws IOException {
-        session.put(m);
-        session.markChanged();
-        store.save(session);
-    }
-
-    @Override
-    public void finish() throws IOException {
-        store.writeIndex(session);
-        store.save(session);
+        if (store.update(sessionId, s -> s.put(m)) == null) throw new IOException("The session was deleted.");
+        if (job != null) job.addFile(m.filename);
     }
 }

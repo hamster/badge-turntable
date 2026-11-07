@@ -38,6 +38,8 @@ import androidx.camera.core.resolutionselector.AspectRatioStrategy;
 import androidx.camera.core.resolutionselector.ResolutionSelector;
 import androidx.camera.core.resolutionselector.ResolutionStrategy;
 import androidx.camera.lifecycle.ProcessCameraProvider;
+import androidx.camera.core.AspectRatio;
+import androidx.camera.video.FallbackStrategy;
 import androidx.camera.video.FileOutputOptions;
 import androidx.camera.video.Quality;
 import androidx.camera.video.QualitySelector;
@@ -292,8 +294,12 @@ public final class CameraController {
         carryLockAcrossRebind();
         provider.unbindAll();
         preview = buildPreview();
+        // 4:3 like the preview and the stills (FHD at 4:3 is 1440x1080 on most phones), so the
+        // preview keeps its shape when the camera switches to video for the spin.
         Recorder recorder = new Recorder.Builder()
-                .setQualitySelector(QualitySelector.from(Quality.FHD))
+                .setQualitySelector(QualitySelector.from(Quality.FHD,
+                        FallbackStrategy.lowerQualityOrHigherThan(Quality.FHD)))
+                .setAspectRatio(AspectRatio.RATIO_4_3)
                 .build();
         videoCapture = VideoCapture.withOutput(recorder);
         analysis = buildAnalysis();
@@ -355,10 +361,12 @@ public final class CameraController {
         ImageAnalysis a = new ImageAnalysis.Builder()
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                 .setResolutionSelector(new ResolutionSelector.Builder()
+                        // 4:3 like the preview, so the overlay's marker positions line up with it.
+                        .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
                         // About 2 MP: at 720p the JAYEGT ring was only ~3.1 px/mm on the test bench,
-                        // and several marker IDs were rarely decoded. The OnePlus picks 1600x1200 (4:3,
-                        // the full sensor width), which raised it to ~3.8 px/mm; detection takes ~28 ms.
-                        .setResolutionStrategy(new ResolutionStrategy(new Size(1920, 1080),
+                        // and several marker IDs were rarely decoded. 1600x1200 (the full sensor
+                        // width) raised it to ~3.8 px/mm; detection takes ~28 ms.
+                        .setResolutionStrategy(new ResolutionStrategy(new Size(1600, 1200),
                                 ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER)).build())
                 .build();
         if (analyzer != null) {

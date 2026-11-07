@@ -13,6 +13,7 @@ import org.snurkle.badgeturntable.camera.CameraController;
 import org.snurkle.badgeturntable.camera.CameraSettings;
 import org.snurkle.badgeturntable.capture.CaptureSequencer;
 import org.snurkle.badgeturntable.capture.CaptureTarget;
+import org.snurkle.badgeturntable.capture.SessionTarget;
 import org.snurkle.badgeturntable.capture.View;
 import org.snurkle.badgeturntable.ir.IrCode;
 import org.snurkle.badgeturntable.ir.IrTransmitter;
@@ -41,10 +42,10 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.LongConsumer;
 
 /**
- * Everything at the light box: camera, encoder ring, IR turntable, capture sequencer, the
- * job runner and the shots held for the editor. The Capture screen owns one, and both its
- * buttons and the remote API start jobs through it, so the same prechecks and one-job-at-a-
- * time rule apply to both.
+ * Everything at the light box: camera, encoder ring, IR turntable and capture sequencer.
+ * The Capture screen owns one and attaches it to the {@link Station} while it's open. Both
+ * its buttons and the remote API start jobs through it, on the Station's job runner, so the
+ * same prechecks and one-job-at-a-time rule apply to both.
  */
 public final class Rig {
     private static final String TAG = "Rig";
@@ -60,14 +61,19 @@ public final class Rig {
     /** Null when the phone has no IR blaster or the profile has no remote. */
     public final TurntableController table;
     public final CaptureSequencer sequencer;
-    public final JobRunner jobs = new JobRunner();
+    public final Station station;
+    /** The Station's. */
+    public final JobRunner jobs;
     public final RemoteShots shots;
     private final List<LongConsumer> countdownListeners = new CopyOnWriteArrayList<>();
     private float lastZoom;
     private String lastLens;
 
-    public Rig(Context context) {
+    public Rig(Context context, Station station) {
         this.context = context.getApplicationContext();
+        this.station = station;
+        this.jobs = station.jobs;
+        this.shots = station.shots;
         prefs = PreferenceManager.getDefaultSharedPreferences(this.context);
         ir = new IrTransmitter(this.context);
         profile = Presets.byId(this.context, prefs.getString("turntable_model", Presets.JAYEGT_574));
@@ -79,7 +85,6 @@ public final class Rig {
                 : null;
         camera = new CameraController(this.context);
         sequencer = new CaptureSequencer(this.context, camera, ring, table);
-        shots = new RemoteShots(this.context.getFilesDir());
 
         CameraSettings s = camera.settings();
         lastZoom = s.zoom;
@@ -89,9 +94,6 @@ public final class Rig {
             if (next.zoom != lastZoom || !Objects.equals(next.lens, lastLens)) ring.resetGeometry();
             lastZoom = next.zoom;
             lastLens = next.lens;
-        });
-        jobs.addListener(job -> {
-            if (job.finished()) shots.recordJob(job);
         });
     }
 
@@ -103,8 +105,8 @@ public final class Rig {
         countdownListeners.remove(l);
     }
 
+    /** The Capture screen is gone. Jobs belong to the Station and carry on being its. */
     public void shutdown() {
-        jobs.shutdown();
         camera.shutdown();
     }
 
@@ -161,6 +163,7 @@ public final class Rig {
      * @return the ring angle
      */
     public double setFront() throws ApiException {
+        requireAttached();
         Job running = jobs.current();
         if (running != null) throw ApiException.busy(running);
         RingReading r = ring.latest();
@@ -221,7 +224,8 @@ public final class Rig {
     }
 
     /** A closed-loop move: {@code by} degrees forward, {@code to} a table angle, or home. */
-    public Job startMove(Double by, Double to, boolean home) throws ApiException {
+    public Job startMove(String source, Double by, Double to, boolean home) throws ApiException {
+        requireAttached();
         if (table == null) throw ApiException.unsupported(null, "This phone can't drive the turntable (no IR blaster or no remote).");
         boolean valid = calibrated();
         if (!valid && !(home && profile.has(Role.RETURN_TO_ORIGIN))) throw ApiException.notCalibrated();
@@ -229,7 +233,7 @@ public final class Rig {
             throw ApiException.unsupported("by", "Moving backwards isn't supported yet. Move forward by 360 minus the angle instead.");
         }
         JSONObject params = home ? Json.obj("home", true) : to != null ? Json.obj("to", to) : Json.obj("by", by);
-        return jobs.start(Job.Kind.MOVE, params, job -> {
+        return jobs.start(Job.Kind.MOVE, source, null, params, job -> {
             while (true) {
                 try {
                     if (home) {
@@ -276,9 +280,10 @@ public final class Rig {
         }
     }
 
-    public Job startCalibrate() throws ApiException {
+    public Job startCalibrate(String source) throws ApiException {
+        requireAttached();
         if (table == null) throw ApiException.unsupported(null, "This phone can't drive the turntable (no IR blaster or no remote).");
-        return jobs.start(Job.Kind.CALIBRATE, new JSONObject(), job -> {
+        return jobs.start(Job.Kind.CALIBRATE, source, null, new JSONObject(), job -> {
             String[] last = {null};
             Calibration cal;
             try {
@@ -320,7 +325,15 @@ public final class Rig {
         return Math.max(dir == null ? 0 : dir.getUsableSpace(), context.getFilesDir().getUsableSpace());
     }
 
+    /** Moves, calibration and Set front read the ring, so they need the Capture screen open. */
+    private void requireAttached() throws ApiException {
+        if (station.rig() != this) throw ApiException.cameraClosed();
+    }
+
+    /** In the API's order: camera_unavailable, busy, not_calibrated, storage_low. */
     private void precheckCamera(boolean needsCalibration) throws ApiException {
+        if (station.rig() != this) throw ApiException.cameraClosed();
+        if (!camera.isOpen()) throw new ApiException(503, "camera_unavailable", "The camera isn't open yet.");
         Job running = jobs.current();
         if (running != null) throw ApiException.busy(running);
         if (needsCalibration && !calibrated()) throw ApiException.notCalibrated();
@@ -329,43 +342,49 @@ public final class Rig {
             throw new ApiException(507, "storage_low", "Less than 500 MB free. Make some space before capturing.")
                     .with("freeBytes", free);
         }
-        if (!camera.isOpen()) {
-            throw new ApiException(503, "camera_unavailable", "The camera isn't open yet.");
-        }
+    }
+
+    /** Where a job's files go: the open session, or the shots held for the editor. */
+    private CaptureTarget writer(Station.Target t, Job job) {
+        return t.isSession() ? new SessionTarget(station.sessions, t.sessionId, job) : shots.target(job);
+    }
+
+    private static String savedText(Station.Target t) {
+        return t.isSession() ? "Done. Saved to " + t.name + "." : "Done. Ready for the editor.";
     }
 
     /**
-     * A turntable set (or an extra set, with setLabel): the four views, the spin, or both.
-     * @param target where the files go; null for the shots held for the editor
+     * A turntable set (or an extra set, with setLabel): the four views, the spin, or both,
+     * into the current target ({@link Station#targetFor}).
+     * @param source {@link Job#PHONE} or {@link Job#EDITOR}
      */
-    public Job startCapture(CaptureTarget target, boolean auto, boolean stills, boolean video, String setLabel)
+    public Job startCapture(String source, boolean auto, boolean stills, boolean video, String setLabel)
             throws ApiException {
         if (!stills && !video) throw ApiException.badRequest("stills", "Ask for the stills, the spin or both.");
         if (auto && table == null) {
             throw ApiException.unsupported("auto", "This phone can't drive the turntable (no IR blaster or no remote). Use manual mode.");
         }
         precheckCamera(auto);
+        Station.Target t = station.targetFor(source);
         CaptureSequencer.Options o = options(auto, stills, video, setLabel);
         JSONObject params = Json.obj("stills", stills, "video", video, "auto", auto, "setLabel", o.setLabel);
-        return jobs.start(Job.Kind.CAPTURE, params, job -> {
+        return jobs.start(Job.Kind.CAPTURE, source, t.jobJson(), params, job -> {
             job.setCamera(cameraSettingsJson());
-            CaptureTarget t = target != null ? target : shots.target(job);
-            boolean complete = sequencer.capture(t, o, new JobListener(job));
-            if (complete) job.setDoneText(target != null ? "Done. Saved to the badge folder." : "Done. The shots are ready for the editor.");
-            else job.setDoneText("Stopped. The views taken so far are kept.");
+            boolean complete = sequencer.capture(writer(t, job), o, new JobListener(job));
+            job.setDoneText(complete ? savedText(t) : "Stopped. The views taken so far are kept.");
             return Json.obj("complete", complete, "shotIds", Json.arr(job.shotIds()));
         });
     }
 
-    /** One extra still. @param target null for the shots held for the editor */
-    public Job startExtra(CaptureTarget target, String label, long delayMs) throws ApiException {
+    /** One extra still, into the current target. */
+    public Job startExtra(String source, String label, long delayMs) throws ApiException {
         precheckCamera(false);
+        Station.Target t = station.targetFor(source);
         JSONObject params = Json.obj("label", label, "delayMs", delayMs);
-        return jobs.start(Job.Kind.EXTRA, params, job -> {
+        return jobs.start(Job.Kind.EXTRA, source, t.jobJson(), params, job -> {
             job.setCamera(cameraSettingsJson());
-            CaptureTarget t = target != null ? target : shots.target(job);
-            sequencer.captureExtra(t, label, delayMs, new JobListener(job));
-            job.setDoneText(target != null ? "Done. Saved to the badge folder." : "Done. The shot is ready for the editor.");
+            sequencer.captureExtra(writer(t, job), label, delayMs, new JobListener(job));
+            job.setDoneText(savedText(t));
             return Json.obj("shotIds", Json.arr(job.shotIds()));
         });
     }
