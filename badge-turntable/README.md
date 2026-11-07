@@ -11,7 +11,7 @@ Where things stand, for picking this up in a new session. The spec is the source
 ### State
 
 - **Builds and runs.** `:app:testDebugUnitTest :app:lintDebug :app:assembleDebug` passes: 55 tests, no lint errors (36 warnings, almost all newer library versions, OpenCV's native libraries not being 16 KB aligned, and the fixed landscape orientation). There's no `gradle` on this PC's PATH, so build from Studio until the wrapper is added (see [Build setup](#build-setup)). Installed and used on a **OnePlus 9 Pro** (adb serial `25e933f`, no IR blaster); IR moves were tested earlier on the **OnePlus 13**.
-- **Nothing is committed** for several sessions. The working tree also holds changes outside this folder: `../Spec.md`, `../Remote-API.md`, `../../edit/` (the editor's Turntable panel), `../../.gitignore`, `../../TODO.md`.
+- **Moved to its own repo** (Nov 7, 2026): this repo holds what was `apps/` in [hamster/badges](https://github.com/hamster/badges), with its history. The editor's Turntable panel (`edit/turntable.js`, `edit/turntable.css`) and `_template/index.md` stay in the site repo; keep a badges checkout beside this one (`../badges` from the repo root) for the template refresh and the mock's editor server.
 - **Verified on the 9 Pro:**
   - Remote control over Wi-Fi from the PC: `badge-turntable.local` resolves; pairing, status, camera settings, the WebSocket (status, ring, about 7 preview frames a second at 640 px), an extra-shot job, shot download and `session.json` all work. Not yet tried from the editor itself.
   - The Capture screen layout, framing guides, tag boxes, zoom, tap to focus, and Back without a crash.
@@ -50,8 +50,7 @@ Where things stand, for picking this up in a new session. The spec is the source
    - Frame matching without the ring: a 64×48 greyscale thumbnail per analysis frame; the end is the best match at least 75% of the way through; if no good match, keep the whole clip (capped at 30 s) and say so.
 4. **Match the mock after "Switch to manual":** once the user picks manual partway through a stop-at-each-view capture, `runViews` doesn't pass that on, so the spin video still starts the table by IR. The mock asks the user to start the table instead. Return the manual switch from `runViews` and pass `drive = false` to `recordSpin`.
 5. **IR:** the Iguana sends codes (`python ../ir-tools/iguana_ir.py send app/src/main/assets/profiles/jayegt-5.74.ir Turn_right`), but on Nov 5 the table didn't respond: check it's on and that the Iguana points at the receiver on the back of the base. Then measure the speed buttons (do −Speed/+Speed work while turning, and do they stop or wrap at the ends?), and run a full spin capture with the PC starting and stopping the table. Then the IR-driven path, including `setSpeed`, on the OnePlus 13.
-6. **Commit.**
-7. **Later, optional:** dependency upgrades (CameraX 1.6, Media3 1.11, OpenCV 4.11 or later for 16 KB pages) each need a test on the phone.
+6. **Later, optional:** dependency upgrades (CameraX 1.6, Media3 1.11, OpenCV 4.11 or later for 16 KB pages) each need a test on the phone.
 
 ### Known problem: ring reading and exposure
 
@@ -77,7 +76,7 @@ The code itself targets Java 17 (`compileOptions` in [app/build.gradle](app/buil
 
 The Gradle wrapper jar and the `gradlew` scripts aren't in the repo yet. Let Studio create them, or run `gradle wrapper` once. Then commit them so `./gradlew test` works from a terminal.
 
-The first build copies the repo's [_template/index.md](../../_template/index.md) into `app/src/main/assets/template/`. That copy is gitignored, because the repo file is the source of truth.
+The badge template is the site's [_template/index.md](https://github.com/hamster/badges/blob/main/_template/index.md), which is the source of truth. A copy is committed at `app/src/main/assets/template/index.md` so the app builds on its own. When a badges checkout is beside this repo (or passed as `-PbadgesRepo=<path>`), every build refreshes the copy from it: commit the change when the site's template changes.
 
 ### Hardware facts (already settled)
 
@@ -106,7 +105,7 @@ The first build copies the repo's [_template/index.md](../../_template/index.md)
 | `session` | `Session`, `SessionJson`, `SessionStore` (the `_badges/` and `_capture/` layout), `IndexMdWriter`, `Slugs`, `BadgeIds` |
 | `sync` | `SmbClient` (smbj: test, upload via temporary file and rename, badge ID scan), `SyncWorker` (WorkManager; uploads the badges queued with Sync), `SmbSettings`, `SecretStore` (Keystore AES-GCM), `KnownBadgeIds` (phone, share and site `badge-ids.json`) |
 
-Related tools elsewhere in the repo:
+Related tools in this repo:
 - [../ir-tools/](../ir-tools/README.md): `iguana_ir.py` captures and replays remote codes on the PC.
 - [../encoder-ring/](../encoder-ring/README.md): the ring generator (paper SVG or ZPL labels, `--invert` for black bands).
 

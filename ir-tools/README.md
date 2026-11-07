@@ -9,10 +9,10 @@ It needs Python 3 (standard library only) and the IguanaIR software, with the *I
 Run these from the repo root.
 
 ```
-python apps/ir-tools/iguana_ir.py listen [--raw]
-python apps/ir-tools/iguana_ir.py learn <file.ir> [--redo] [--only NAME ...] [--extra NAME ...]
-python apps/ir-tools/iguana_ir.py send <file.ir> <name>
-python apps/ir-tools/iguana_ir.py nec [--address 00] <command> [<command> ...]
+python ir-tools/iguana_ir.py listen [--raw]
+python ir-tools/iguana_ir.py learn <file.ir> [--redo] [--only NAME ...] [--extra NAME ...]
+python ir-tools/iguana_ir.py send <file.ir> <name>
+python ir-tools/iguana_ir.py nec [--address 00] <command> [<command> ...]
 ```
 
 - **`listen`** prints each code the receiver sees, such as `NEC address 0x00 command 0x40`. `--raw` adds the timings. Stop with Ctrl+C.

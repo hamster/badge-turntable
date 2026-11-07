@@ -14,7 +14,7 @@ Draft 5 · Nov 5, 2026. Background research (IR APIs, viewer libraries, hosting 
 
 An Android app, written in Java, that photographs a badge on an IR-controlled turntable inside a light box. The phone's IR blaster drives the turntable. A printed encoder ring on the turntable tells the app the table's real angle, so every move can be checked.
 
-One capture produces four high-resolution stills (0°, 90°, 180°, 270°, with 0° being the front of the badge) and an optional 360° spin video. Extra shots, such as the lanyard or add-ons installed, can be added to the same badge. Everything is written into a badge folder laid out like the repo's, including an `index.md` filled from [_template/index.md](../_template/index.md). The folder is saved locally and optionally synced to a Samba share. The rest of the badge details are filled in later on a PC with the web editor.
+One capture produces four high-resolution stills (0°, 90°, 180°, 270°, with 0° being the front of the badge) and an optional 360° spin video. Extra shots, such as the lanyard or add-ons installed, can be added to the same badge. Everything is written into a badge folder laid out like the repo's, including an `index.md` filled from [_template/index.md](https://github.com/hamster/badges/blob/main/_template/index.md). The folder is saved locally and optionally synced to a Samba share. The rest of the badge details are filled in later on a PC with the web editor.
 
 Typing on a phone clamped in a tripod is awkward, so the app can also be driven from the PC. The web editor connects to the phone over the local network, shows a live preview, runs calibration and captures, and saves the photos straight into the repo with the badge details. See [Remote control from the editor](#remote-control-from-the-editor).
 
@@ -267,7 +267,7 @@ stateDiagram-v2
    - Start recording with the same locks, send continuous rotation, and log the angle against the frame timestamp.
    - On the JAYEGT, use 15 s per revolution. At 8 s the rim moves about 57 mm/s and smears the ring. At 30 s the clip would need speeding up to fit the 30 s limit.
    - Stop after 360° plus an overlap (default 15°), then stop the table.
-   - Afterwards, **trim the clip to exactly one revolution**, from the frame at the start angle to the frame back at the start angle, so it loops seamlessly on the site (see [Seamless spin loop](#seamless-spin-loop)). This also solves the looping item in [TODO.md](../TODO.md).
+   - Afterwards, **trim the clip to exactly one revolution**, from the frame at the start angle to the frame back at the start angle, so it loops seamlessly on the site (see [Seamless spin loop](#seamless-spin-loop)). This also solves the looping item in [TODO.md](https://github.com/hamster/badges/blob/main/TODO.md).
 6. **Write** the badge folder (see [Output](#output)) and **home** the table back to 0° so the next badge can be placed.
 
 The screen stays on during a sequence. If the app goes to the background, the sequence aborts cleanly and keeps the views already captured.
@@ -327,7 +327,7 @@ The source recording (1080p or 4K, untrimmed) is kept as an original.
 
 ### `index.md`
 
-- Generated from [_template/index.md](../_template/index.md). A Gradle copy task bundles the template into the app's assets at build time, so it can't drift from the repo.
+- Generated from [_template/index.md](https://github.com/hamster/badges/blob/main/_template/index.md). The app bundles a copy in its assets, and a Gradle copy task refreshes it at build time from a [badges](https://github.com/hamster/badges) checkout beside this repo, so it doesn't drift from the site.
 - The app fills in `title`, `slug`, `year`, `con`, `event`, `group` and `badge_id`, plus:
   - the `images:` list, with `front.jpg` first and `highlight: true`, so the front photo is the card thumbnail and the hero image;
   - a `videos:` block (the template doesn't include one, so the app adds it). The videos get no `highlight`, so the badge page plays the spin video automatically below the images.
@@ -437,7 +437,7 @@ The full contract, with every request and response, the error codes, jobs and pr
 
 ### In the editor
 
-A **Turntable** panel in `/edit/` (its own script and styles, [edit/turntable.js](../edit/turntable.js) and [edit/turntable.css](../edit/turntable.css)) is built and tested against the mock phone. It contains:
+A **Turntable** panel in `/edit/` (its own script and styles, [edit/turntable.js](https://github.com/hamster/badges/blob/main/edit/turntable.js) and [edit/turntable.css](https://github.com/hamster/badges/blob/main/edit/turntable.css) in the badges repo) is built and tested against the mock phone. It contains:
 
 - **Phones:** **Find phones** probes `badge-turntable.local`, remembered phones and added addresses. **Add by address**, **Pair…** (type the code shown on the phone), **Connect**, **Disconnect** and **Forget**. The last phone used reconnects when the panel opens. If the browser hasn't been given local network access yet, the first probe waits for a click on **Find phones**, so the permission prompt appears.
 - **Preview:** the live JPEG frames, with the ring overlay (axis and markers), an optional thirds grid, and the table and ring angle readout. Click to focus on a spot (focus only, not exposure): it stays there, marked with a ring, until **Back to auto**, and a capture replaces it with its own centre focus, so it's mainly for extra shots of a detail. Under the preview: lens (if there's more than one), zoom, **Brightness** (exposure compensation; exposure stays automatic) and a focus line saying what focus is doing. **More camera settings** folds away manual exposure (ISO and shutter), manual focus distance, white balance (presets or Kelvin) and **Hold** boxes for exposure, focus and white balance (the AE, AF and AWB locks). All are built from the phone's capabilities and locked while a sequence runs.
@@ -471,11 +471,11 @@ The app depends on, or benefits from, these changes to the badge museum site its
 
 ### `badge-ids.json` (done)
 
-[badge-ids.json](../badge-ids.json) is a Jekyll page that lists every `badge_id` with its `slug` and `con`. The app uses it to suggest IDs (see [Badge ID](#badge-id)).
+[badge-ids.json](https://github.com/hamster/badges/blob/main/badge-ids.json) is a Jekyll page that lists every `badge_id` with its `slug` and `con`. The app uses it to suggest IDs (see [Badge ID](#badge-id)).
 
 ### Publish-time media (done)
 
-[.github/scripts/optimize_media.py](../.github/scripts/optimize_media.py) runs in the Pages workflow after `jekyll build`:
+[.github/scripts/optimize_media.py](https://github.com/hamster/badges/blob/main/.github/scripts/optimize_media.py) runs in the Pages workflow after `jekyll build`:
 
 - **Photos:** each badge photo gets two WebP copies, written only into the built site and never committed:
   - `thumbs/` at 640 px on the long edge (about 20 KB), for grid cards and the gallery strip,

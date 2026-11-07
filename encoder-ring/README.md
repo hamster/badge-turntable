@@ -65,7 +65,7 @@ The ring gives the angle. Calibration (in the app) learns how the *turntable* be
 
 Use either of these:
 
-- **Browser:** open [index.html](index.html) through the Jekyll dev server (`http://localhost:4000/badges/apps/encoder-ring/`) or the published site. It won't work opened straight from disk, because browsers block module scripts on `file://`. Enter the measurements, choose paper or label, then **Print** or **Download ZPL**.
+- **Browser:** serve this folder over HTTP and open the page, for example `python -m http.server 8000` here, then `http://localhost:8000/`. It won't work opened straight from disk, because browsers block module scripts on `file://`. Enter the measurements, choose paper or label, then **Print** or **Download ZPL**.
 - **Command line** (Node 18+):
 
   ```bash

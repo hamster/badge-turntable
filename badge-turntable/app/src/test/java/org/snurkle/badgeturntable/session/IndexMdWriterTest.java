@@ -86,8 +86,8 @@ public class IndexMdWriterTest {
 
     @Test
     public void realTemplate() throws Exception {
-        File f = new File("../../../_template/index.md");  // tests run from app/
-        assumeTrue("repo template not found", f.exists());
+        File f = new File("src/main/assets/template/index.md");  // the bundled copy; tests run from app/
+        assumeTrue("bundled template not found", f.exists());
         String template = new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8);
         String out = IndexMdWriter.write(template, mk9());
         assertTrue(out.contains("slug: dczia-mk9-2026\n"));

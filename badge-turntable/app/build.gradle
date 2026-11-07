@@ -39,10 +39,15 @@ android {
     }
 }
 
-// Bundle the repo's badge template so generated index.md files can't drift from it.
+// The badge template comes from the badges site repo (hamster/badges). A copy is committed in
+// the assets, so the app builds on its own; with the site checked out beside this repo (or at
+// -PbadgesRepo=<path>), each build refreshes the copy so generated index.md files match the site.
+def badgesRepo = rootProject.file(providers.gradleProperty('badgesRepo').getOrElse('../../badges'))
+def siteTemplate = new File(badgesRepo, '_template/index.md')
 def copyBadgeTemplate = tasks.register('copyBadgeTemplate', Copy) {
-    from rootProject.file('../../_template/index.md')
+    from siteTemplate
     into layout.projectDirectory.dir('src/main/assets/template')
+    onlyIf { siteTemplate.exists() }
 }
 tasks.named('preBuild') { dependsOn copyBadgeTemplate }
 

@@ -6,4 +6,3 @@ local.properties
 .cxx/
 .externalNativeBuild/
 captures/
-app/src/main/assets/template/

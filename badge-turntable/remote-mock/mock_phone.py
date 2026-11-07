@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Mock Badge Turntable phone.
 
-Implements the remote-control API in apps/Remote-API.md with a simulated
+Implements the remote-control API in ../../Remote-API.md with a simulated
 turntable, encoder ring and camera, so the editor's Turntable panel can be
 built and tested without the phone. It's also the reference implementation
 for the app: when the API text is unclear, do what this does.
@@ -12,7 +12,9 @@ Needs Python 3.10+ and Pillow. ffmpeg (optional) makes real spin videos.
     python mock_phone.py --code 123456      # fixed pairing code
     python mock_phone.py --fail-move 2      # the 2nd closed-loop move fails
 
-Then open http://localhost:4000/badges/edit/ in Chrome or Edge.
+Then open http://localhost:4000/badges/edit/ in Chrome or Edge. The editor is
+served from a checkout of the badges site repo (hamster/badges), by default
+one beside this repo; --site points elsewhere.
 """
 
 import argparse
@@ -53,7 +55,10 @@ VIEWS = [(0, "front", "Front"), (90, "side-090", "Side (90°)"), (180, "back", "
 MARKERS = 45
 MARKER_PITCH = 8.0
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
-REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+HERE = os.path.dirname(os.path.abspath(__file__))
+# The badges site repo, for the editor server: by default checked out beside this repo.
+DEFAULT_SITE_ROOT = os.path.abspath(os.path.join(HERE, "..", "..", "..", "badges"))
+SITE_ROOT = DEFAULT_SITE_ROOT  # set from --site in main()
 
 LENSES = [
     {"id": "0", "label": "Back (logical)", "focalLengthMm": 5.59, "minFocusCm": 10},
@@ -584,7 +589,7 @@ class Phone:
             job = self.job.to_json() if self.job else None
             shots = list(self.shots.values())
         try:
-            free = shutil.disk_usage(REPO_ROOT).free
+            free = shutil.disk_usage(HERE).free
         except OSError:
             free = None
         return {
@@ -1611,7 +1616,7 @@ EDITOR_SHELL = """<!DOCTYPE html>
 
 class EditorHandler(SimpleHTTPRequestHandler):
     def __init__(self, *a, **kw):
-        super().__init__(*a, directory=REPO_ROOT, **kw)
+        super().__init__(*a, directory=SITE_ROOT, **kw)
 
     def log_message(self, fmt, *args):
         if PHONE.args.verbose:
@@ -1629,7 +1634,7 @@ class EditorHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             return
         if path in ("/badges/edit/", "/badges/edit/index.html"):
-            with open(os.path.join(REPO_ROOT, "edit", "index.html"), encoding="utf-8") as f:
+            with open(os.path.join(SITE_ROOT, "edit", "index.html"), encoding="utf-8") as f:
                 text = f.read()
             text = re.sub(r"\A---\n.*?\n---\n", "", text, flags=re.S)
             text = text.replace("{{ site.repository }}", "hamster/badges")
@@ -1647,11 +1652,13 @@ class EditorHandler(SimpleHTTPRequestHandler):
 
 
 def main():
-    global PHONE
+    global PHONE, SITE_ROOT
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--host", default="127.0.0.1", help="address to listen on (0.0.0.0 for the LAN)")
     ap.add_argument("--port", type=int, default=8737)
     ap.add_argument("--editor-port", type=int, default=4000, help="serve /badges/edit/ here (0 = off)")
+    ap.add_argument("--site", default=DEFAULT_SITE_ROOT,
+                    help="badges site repo checkout to serve the editor from (default: %(default)s)")
     ap.add_argument("--name", default="badge-turntable", help="the phone's mDNS name, without .local")
     ap.add_argument("--code", help="fixed 6-digit pairing code (default: random, changes every 2 minutes)")
     ap.add_argument("--token", help="pre-paired token, for curl tests")
@@ -1665,6 +1672,7 @@ def main():
     if args.code and not re.fullmatch(r"\d{6}", args.code):
         ap.error("--code must be 6 digits")
 
+    SITE_ROOT = os.path.abspath(args.site)
     PHONE = Phone(args)
     try:
         sys.stdout.reconfigure(line_buffering=True)
@@ -1674,7 +1682,9 @@ def main():
     print("Mock phone: http://%s:%d/api/info" % (args.host, args.port))
     if not PHONE.ffmpeg:
         print("  (no ffmpeg on PATH: spin videos will be empty)")
-    if args.editor_port:
+    if args.editor_port and not os.path.isfile(os.path.join(SITE_ROOT, "edit", "index.html")):
+        print("Editor:     off (no badges site checkout at %s; use --site)" % SITE_ROOT)
+    elif args.editor_port:
         ed = QuietServer(("127.0.0.1", args.editor_port), EditorHandler)
         threading.Thread(target=ed.serve_forever, daemon=True).start()
         print("Editor:     http://localhost:%d/badges/edit/" % args.editor_port)

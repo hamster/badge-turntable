@@ -13,7 +13,7 @@ python mock_phone.py
 ```
 
 - The phone listens on `http://127.0.0.1:8737/api/` and prints its pairing code (it changes every 2 minutes, like the app's).
-- It also serves the editor at **http://localhost:4000/badges/edit/**, a stand-in for `jekyll serve` that's just enough for `/edit/`. Like the app, the mock accepts calls from any origin; the pairing code and token are the protection.
+- It also serves the editor at **http://localhost:4000/badges/edit/**, a stand-in for `jekyll serve` that's just enough for `/edit/`. The editor lives in the [badges](https://github.com/hamster/badges) site repo: the mock serves it from a checkout beside this repo (`../badges`), or from `--site <path>`. Without one, it runs the phone only. Like the app, the mock accepts calls from any origin; the pairing code and token are the protection.
 - In the editor, open your repo, expand **Turntable**, and add the phone by address: `127.0.0.1`, port `8737`. Then pair with the printed code.
 
 `--host 0.0.0.0` puts the mock on the LAN, so it can be tried from the published editor on GitHub Pages (which exercises Chrome's Local Network Access prompt).
@@ -30,6 +30,7 @@ python mock_phone.py
 | `--deg-per-sec 24` | Table speed. The default, 90, keeps tests quick; the JAYEGT does about 24 |
 | `--rotate 0` | Preview header rotation. The default, 1, sends frames turned on their side, to test that the editor rotates them back |
 | `--port`, `--editor-port`, `--name` | As named. `--editor-port 0` turns the editor server off |
+| `--site <path>` | The badges site checkout to serve the editor from (default: `badges` beside this repo) |
 | `--verbose` | Log every request |
 
 ## Test controls
