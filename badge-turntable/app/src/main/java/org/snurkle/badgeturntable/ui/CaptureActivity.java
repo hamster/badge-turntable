@@ -78,7 +78,7 @@ public final class CaptureActivity extends AppCompatActivity implements JobRunne
     private MaterialSwitch autoSwitch, barsSwitch, movingSwitch;
     /** Set while showCamera moves the bars switch, so its listener doesn't write the change back. */
     private boolean showingBars;
-    private Button captureButton, extraButton, calibrateButton, wbButton, lensButton, zoomButton, targetButton;
+    private Button captureButton, extraButton, calibrateButton, wbButton, lensButton, zoomButton, evButton, targetButton;
     private ScaleGestureDetector pinch;
     private GestureDetector taps;
     private AlertDialog promptDialog;
@@ -150,6 +150,7 @@ public final class CaptureActivity extends AppCompatActivity implements JobRunne
         wbButton = findViewById(R.id.wb);
         lensButton = findViewById(R.id.lens);
         zoomButton = findViewById(R.id.zoom_reset);
+        evButton = findViewById(R.id.ev_reset);
 
         rig.ring.addListener(this::showRing);
         rig.jobs.addListener(this);
@@ -168,6 +169,7 @@ public final class CaptureActivity extends AppCompatActivity implements JobRunne
         });
         findViewById(R.id.ev_minus).setOnClickListener(v -> stepEv(-1));
         findViewById(R.id.ev_plus).setOnClickListener(v -> stepEv(1));
+        evButton.setOnClickListener(v -> rig.camera.update(s -> s.ev = 0));
         wbButton.setOnClickListener(v -> cycleWhiteBalance());
         lensButton.setOnClickListener(v -> nextLens());
         findViewById(R.id.zoom_in).setOnClickListener(v -> stepZoom(ZOOM_STEP));
@@ -297,6 +299,17 @@ public final class CaptureActivity extends AppCompatActivity implements JobRunne
         rig.camera.update(s -> s.ev = Math.max(caps.evMin, Math.min(caps.evMax, s.ev + by)));
     }
 
+    /**
+     * The compensation in stops, as "0", "+0.3" or "−1.0": the setting counts the camera's
+     * steps (often 1/6 or 1/3 stop). Before the camera reports its step, the step count.
+     */
+    static String evText(int steps, double stepStops) {
+        if (steps == 0) return "0";
+        double v = stepStops > 0 ? steps * stepStops : steps;
+        String s = stepStops > 0 ? String.format(Locale.ROOT, "%.1f", Math.abs(v)) : String.valueOf(Math.abs(steps));
+        return (v > 0 ? "+" : "−") + s;
+    }
+
     private void cycleWhiteBalance() {
         CameraController.WhiteBalance[] all = CameraController.WhiteBalance.values();
         CameraController.WhiteBalance now = CameraController.WhiteBalance.fromApi(rig.camera.settings().whiteBalance);
@@ -312,6 +325,7 @@ public final class CaptureActivity extends AppCompatActivity implements JobRunne
         overlay.setBars(s.bars());
         wbButton.setText(getString(R.string.wb_label, s.whiteBalance));
         zoomButton.setText(getString(R.string.zoom_label, s.zoom));
+        evButton.setText(getString(R.string.ev_label, evText(s.ev, rig.camera.capabilities().evStep)));
         List<CameraController.Lens> lenses = rig.camera.capabilities().lenses;
         String bound = rig.camera.boundLensId();
         String label = null;

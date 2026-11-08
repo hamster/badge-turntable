@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   Landscape: remote control's address and code centred across the top (clear of the camera
-  privacy indicator in the corner), the whole 4:3 frame (as the stills are) in the middle, a
-  status line across the bottom, and the ring reading and buttons in the columns either side.
-  Nothing covers the picture or the ring, and nothing moves as the reading changes.
+  privacy indicator in the corner), the whole 4:3 frame (as the stills are) in the middle with a
+  status line under it, and the ring reading and buttons in the columns either side, which run
+  to the bottom of the screen. Nothing covers the picture or the ring, and nothing moves as the
+  reading or the status changes (the status shrinks its text to fit one line).
 -->
 <androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
@@ -39,20 +40,22 @@
             tools:visibility="visible" />
     </LinearLayout>
 
+    <!-- Only as wide as the preview, so the columns either side get the full height -->
     <TextView
         android:id="@+id/status"
         android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:ellipsize="end"
-        android:gravity="center_horizontal"
-        android:maxLines="1"
-        android:paddingHorizontal="12dp"
-        android:paddingVertical="4dp"
+        android:layout_height="32dp"
+        android:gravity="center"
+        android:lines="1"
+        android:paddingHorizontal="8dp"
         android:textAppearance="?attr/textAppearanceBodyLarge"
         android:textColor="@android:color/white"
+        app:autoSizeMaxTextSize="16sp"
+        app:autoSizeMinTextSize="11sp"
+        app:autoSizeTextType="uniform"
         app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="@id/preview_frame"
+        app:layout_constraintStart_toStartOf="@id/preview_frame"
         tools:text="Capturing Side (90°) on the move…" />
 
     <FrameLayout
@@ -83,7 +86,7 @@
         android:layout_height="0dp"
         android:orientation="vertical"
         android:paddingHorizontal="8dp"
-        app:layout_constraintBottom_toTopOf="@id/status"
+        app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toStartOf="@id/preview_frame"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@id/top_bar">
@@ -152,7 +155,7 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_marginHorizontal="4dp"
-                android:layout_weight="1.4"
+                android:layout_weight="1.8"
                 android:contentDescription="@string/zoom_reset"
                 android:minWidth="0dp"
                 android:paddingHorizontal="0dp"
@@ -181,20 +184,35 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
+                android:contentDescription="@string/ev_down"
                 android:minWidth="0dp"
                 android:paddingHorizontal="0dp"
-                android:text="@string/ev_minus" />
+                android:text="@string/zoom_minus" />
+
+            <!-- The exposure compensation; tap to go back to 0 -->
+            <Button
+                android:id="@+id/ev_reset"
+                style="?attr/materialButtonOutlinedStyle"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="4dp"
+                android:layout_weight="1.8"
+                android:contentDescription="@string/ev_reset"
+                android:maxLines="1"
+                android:minWidth="0dp"
+                android:paddingHorizontal="0dp"
+                tools:text="EV +0.3" />
 
             <Button
                 android:id="@+id/ev_plus"
                 style="?attr/materialButtonOutlinedStyle"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="4dp"
                 android:layout_weight="1"
+                android:contentDescription="@string/ev_up"
                 android:minWidth="0dp"
                 android:paddingHorizontal="0dp"
-                android:text="@string/ev_plus" />
+                android:text="@string/zoom_plus" />
         </LinearLayout>
 
         <Button
@@ -211,7 +229,8 @@
         android:layout_height="0dp"
         android:orientation="vertical"
         android:paddingHorizontal="8dp"
-        app:layout_constraintBottom_toTopOf="@id/status"
+        android:paddingBottom="4dp"
+        app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toEndOf="@id/preview_frame"
         app:layout_constraintTop_toBottomOf="@id/top_bar">

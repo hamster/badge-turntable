@@ -59,8 +59,10 @@
     <string name="calibrate">Calibrate</string>
     <string name="auto_turntable">Auto table</string>
     <string name="wb_label">WB: %1$s</string>
-    <string name="ev_minus">EV −</string>
-    <string name="ev_plus">EV +</string>
+    <string name="ev_down">Darker (exposure down)</string>
+    <string name="ev_up">Brighter (exposure up)</string>
+    <string name="ev_reset">Exposure back to 0</string>
+    <string name="ev_label">EV %1$s</string>
     <string name="ring_angle">Ring %1$5.1f°</string>
     <string name="ring_not_visible">Ring not seen</string>
     <string name="ring_tags">%1$2d tags</string>
