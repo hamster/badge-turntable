@@ -1,10 +1,10 @@
 # Badge Turntable — Remote API
 
-API version **1** · Nov 5, 2026. This is the contract between the Badge Turntable app (the server, on the phone) and the web editor's Turntable panel ([edit/turntable.js](https://github.com/hamster/badges/blob/main/edit/turntable.js) in the badges repo, the client). The background, the security reasoning and the user-facing behaviour are in [Spec.md § Remote control from the editor](Spec.md#remote-control-from-the-editor). Where the two disagree about the wire format, this document wins.
+API version **1** · Nov 7, 2026 (adds [Sessions](#sessions), the shared [capture target](#capture-target), `POST /api/camera/open`, the server on every screen, job `source`, `target` and `stoppedBy`, and web copies only). This is the contract between the Badge Turntable app (the server, on the phone) and the web editor's Turntable panel ([edit/turntable.js](https://github.com/hamster/badges/blob/main/edit/turntable.js) in the badges repo, the client). The background, the security reasoning and the user-facing behaviour are in [Spec.md § Remote control from the editor](Spec.md#remote-control-from-the-editor). Where the two disagree about the wire format, this document wins.
 
 A mock phone that implements all of it is in [badge-turntable/remote-mock/](badge-turntable/remote-mock/README.md). It's the reference when this text is unclear, and the editor panel is tested against it.
 
-Contents: [Conventions](#conventions) · [Errors](#errors) · [CORS](#cors) · [Pairing and tokens](#pairing-and-tokens) · [Endpoints](#endpoints) · [Jobs](#jobs) · [Shots](#shots) · [WebSocket `/api/live`](#websocket-apilive) · [Discovery](#discovery) · [Implementation notes for the app](#implementation-notes-for-the-app)
+Contents: [Conventions](#conventions) · [Errors](#errors) · [CORS](#cors) · [Pairing and tokens](#pairing-and-tokens) · [Endpoints](#endpoints) · [Jobs](#jobs) · [Shots](#shots) · [Sessions](#sessions) · [WebSocket `/api/live`](#websocket-apilive) · [Discovery](#discovery) · [Implementation notes for the app](#implementation-notes-for-the-app)
 
 ## Conventions
 
@@ -32,9 +32,10 @@ Every error is an HTTP status with this body:
 | 400 | `bad_request` | Malformed JSON, missing or out-of-range field | `field` |
 | 401 | `unauthorized` | No token, or the token isn't valid (revoked, or the app's data was cleared) | |
 | 401 | `bad_code` | Wrong or expired pairing code | `attemptsLeft` |
-| 404 | `not_found` | Unknown path, shot ID or job | |
+| 404 | `not_found` | Unknown path, shot ID, session ID, session file or job | |
 | 405 | `method_not_allowed` | Known path, wrong method | |
-| 409 | `busy` | A job is running and this request needs the camera or the turntable | `jobId` |
+| 409 | `busy` | A job is running and this request needs the camera or the turntable, or would change files the job is writing. `message` says who is running what ("The phone is capturing Mk9. Wait for it, or stop it.") | `jobId`, `source`, `target` (as in the [Job object](#job-object)) |
+| 409 | `session_open` | The phone has a session open that this editor hasn't joined, and it asked to capture (join it or start a new set with [`POST /api/target`](#capture-target) first); or it asked to delete the session that's the capture target | `sessionId` |
 | 409 | `not_calibrated` | Auto capture or a closed-loop move without a valid calibration | |
 | 409 | `no_job` | Answering or aborting when no job is running | |
 | 409 | `prompt_gone` | The prompt was already answered (from the phone or another tab), or it isn't the current prompt | |
@@ -43,7 +44,7 @@ Every error is an HTTP status with this body:
 | 422 | `unsupported` | The phone or the profile can't do it: a role the remote doesn't have, a camera setting the lens doesn't offer, no IR blaster | `field` |
 | 429 | `pairing_locked` | Five wrong codes in a row | `retryAfterMs` |
 | 500 | `internal` | Anything unexpected. `message` carries the exception text | |
-| 503 | `camera_unavailable` | The camera isn't open (the app is starting, or another app has it) | |
+| 503 | `camera_unavailable` | The camera isn't open: the phone isn't on its Capture screen ("Open the Camera screen on the phone"), the camera is still starting, or another app has it | |
 | 507 | `storage_low` | Less than 500 MB free, so a capture won't start | `freeBytes` |
 
 ## CORS
@@ -65,7 +66,7 @@ Access-Control-Max-Age: 600
 
 ## Pairing and tokens
 
-- While remote control is on, the Capture screen shows a **6-digit pairing code**. It changes every 2 minutes and right after a successful pairing. Codes are random (`SecureRandom`), not sequential.
+- While remote control is on, the remote-control banner (on every screen of the app) shows a **6-digit pairing code**. It changes every 2 minutes and right after a successful pairing. Codes are random (`SecureRandom`), not sequential.
 - `POST /api/pair` swaps the current code for a **token**: 128 random bits as 32 lowercase hex characters. The phone stores tokens with the client name and time paired, and lists them in **Settings → Remote control → Paired PCs**, where each can be revoked.
 - After **5 wrong codes in a row**, pairing is locked for 60 s (`429 pairing_locked`). A correct code resets the count.
 - Every endpoint except `GET /api/info`, `POST /api/pair` and `OPTIONS` needs `Authorization: Bearer <token>`. Compare tokens in constant time.
@@ -73,21 +74,23 @@ Access-Control-Max-Age: 600
 
 ## Endpoints
 
+The server runs while the app is in the foreground, on any screen. Endpoints marked **Cam** need the phone's Capture screen open, and answer `503 camera_unavailable` until it is (`cameraOpen` in [Status](#get-apistatus) says which). The rest work from any screen.
+
 | Method and path | Auth | Purpose | Response |
 | --- | --- | --- | --- |
 | `GET /api/info` | No | Who is this phone | `200` [Info](#get-apiinfo) |
 | `POST /api/pair` | No | Pair with the code on screen | `200 {token, deviceId, name}` |
 | `DELETE /api/pair` | Yes | Forget this client's token (the editor's **Forget**) | `204` |
 | `GET /api/status` | Yes | Everything the panel shows, at once | `200` [Status](#get-apistatus) |
-| `GET /api/camera` | Yes | Camera capabilities and current settings | `200 {capabilities, settings}` |
-| `POST /api/camera` | Yes | Change settings (partial) | `200 {settings}` |
-| `POST /api/camera/focus` | Yes | Tap to focus and meter at a point | `200 {settings}` |
+| `GET /api/camera` | Cam | Camera capabilities and current settings | `200 {capabilities, settings}` |
+| `POST /api/camera` | Cam | Change settings (partial) | `200 {settings}` |
+| `POST /api/camera/focus` | Cam | Tap to focus and meter at a point | `200 {settings}` |
 | `POST /api/turntable/press` | Yes | Send one button's IR code | `200 {role}` |
-| `POST /api/turntable/move` | Yes | Closed-loop move, or home | `202 {job}` |
-| `POST /api/turntable/front` | Yes | Set front: make the table's position now the front | `200 {frontRingDeg}` |
-| `POST /api/calibrate` | Yes | Run calibration | `202 {job}` |
-| `POST /api/capture` | Yes | Turntable set, or an extra set | `202 {job}` |
-| `POST /api/extra` | Yes | One extra still | `202 {job}` |
+| `POST /api/turntable/move` | Cam | Closed-loop move, or home | `202 {job}` |
+| `POST /api/turntable/front` | Cam | Set front: make the table's position now the front | `200 {frontRingDeg}` |
+| `POST /api/calibrate` | Cam | Run calibration | `202 {job}` |
+| `POST /api/capture` | Cam | Turntable set, or an extra set | `202 {job}` |
+| `POST /api/extra` | Cam | One extra still | `202 {job}` |
 | `GET /api/jobs/current` | Yes | The running job, or the last one | `200 {job}` (`job` may be `null`) |
 | `POST /api/jobs/current/answer` | Yes | Answer the job's prompt | `200 {job}` |
 | `DELETE /api/jobs/current` | Yes | Stop the job | `200 {job}` |
@@ -95,7 +98,15 @@ Access-Control-Max-Age: 600
 | `GET /api/shots/{id}` | Yes | A shot's file | `200` bytes |
 | `DELETE /api/shots/{id}` | Yes | Drop one shot | `204` |
 | `DELETE /api/shots` | Yes | Drop all shots | `200 {deleted}` |
-| `GET /api/session.json` | Yes | The capture record, for `_capture/` | `200` [Session record](#get-apisessionjson) |
+| `GET /api/session.json` | Yes | The capture record of the held shots (kept for older editors) | `200` [Session record](#get-apisessionjson) |
+| `GET /api/target` | Yes | Where captures go | `200 {target}` |
+| `POST /api/target` | Yes | Join the phone's session, or start a new set of shots | `200 {target}` |
+| `POST /api/camera/open` | Yes | Open the phone's Capture screen | `200 {cameraOpen: true}` |
+| `GET /api/sessions` | Yes | The sessions captured on the phone | `200 {sessions: [Session summary…]}` |
+| `GET /api/sessions/{id}` | Yes | One session, with its notes and media | `200` [Session](#session-summary-and-session-object) |
+| `GET /api/sessions/{id}/media/{filename}` | Yes | One of its files | `200` bytes |
+| `DELETE /api/sessions/{id}/media/{filename}` | Yes | Delete one of its files | `204` |
+| `DELETE /api/sessions/{id}` | Yes | Delete the whole session | `204` |
 | `GET /api/live` | First message | WebSocket: preview, ring, status, job events | `101` |
 
 ### `GET /api/info`
@@ -134,6 +145,9 @@ Errors: `400 bad_request` (code isn't 6 digits), `401 bad_code` with `attemptsLe
 ```json
 {
   "clients": [{ "clientName": "Edge on HAMSTER-PC", "since": "2026-11-04T18:20:11.000Z" }],
+  "cameraOpen": true,
+  "target": { "kind": "session", "sessionId": "0b6f3c2e-5d1a-4e7b-9a0c-2f4d6e8a1b3c", "name": "Mk9", "setBy": "phone", "editorJoined": false },
+  "sessions": { "count": 3, "bytes": 48123456 },
   "turntable": {
     "profileId": "jayegt-5.74",
     "profileName": "JAYEGT 5.74 in",
@@ -162,6 +176,9 @@ Errors: `400 bad_request` (code isn't 6 digits), `401 bad_code` with `attemptsLe
 ```
 
 - `clients` lists the editor tabs with an open WebSocket.
+- `cameraOpen` is `true` while the phone's Capture screen is open, so the **Cam** endpoints work. While it's `false`, `ring` is `{"ok": false, …}` with the angles `null`, and `camera` is `null`.
+- `target` is where captures go, from the phone or the editor ([Capture target](#capture-target)). When it's a session the editor hasn't joined (`editorJoined: false`), the editor asks its user to join it or start a new set before capturing.
+- `sessions` counts the sessions on the phone and their total size.
 - `turntable.roles` lists the roles the current profile has a code for, in `Role` enum order. These are the editor's Test buttons. `irAvailable` is `false` when the phone has no IR blaster or the profile is manual-only. In that case `roles` is empty and every IR command returns `422 unsupported`.
 - `turntable.frontRingDeg` is the ring angle set with [Set front](#post-apiturntablefront), or `null` if none has been set.
 - `calibration.state` is `valid`, `missing` (never calibrated) or `stale` (the profile or marker count changed since; `reason` says which). The other calibration fields are `null` unless the state is `valid` or `stale`. `step90Deg` is `null` when the remote has no `step_90`.
@@ -270,7 +287,7 @@ Body: `{}`. Runs `Calibrator` as a job of kind `calibrate`. Progress text comes 
 - `auto`: `true` moves the table and checks each angle. `false` is manual mode: a `position` prompt for each view (and for the spin), answered when the user has turned the table. Default `true`.
 - `setLabel`: `null` (or missing, or empty) for the main turntable set, or a label such as `"With SAOs installed"` for an [extra set](Spec.md#extra-shots).
 
-Prechecks, in order: `409 busy`, `409 not_calibrated` (auto only), `507 storage_low`, `503 camera_unavailable`. No Samba check in remote mode. Then `202 {job}` with kind `capture`. The sequence follows the phone's **Settings → Capture → Capture method**, the same as a capture started on the phone, except **Write** keeps the files as remote [shots](#shots) instead of writing a badge folder:
+Prechecks, in order: `503 camera_unavailable`, `409 busy`, `409 not_calibrated` (auto only), `507 storage_low`. Then `202 {job}` with kind `capture`. The sequence follows the phone's **Settings → Capture → Capture method**, the same as a capture started on the phone, except **Write** keeps the files as remote [shots](#shots) instead of writing a badge folder:
 
 - **Spin** (the default; see [Spin capture](Spec.md#spin-capture-default)): the table turns continuously and the stills are taken as the ring passes each angle, then the spin is recorded. It needs the ring. With `auto: false` there are no `position` prompts: `progress.text` asks the user to start the table ("Start the turntable (slowest speed is sharpest)"), the phone waits up to 2 minutes for steady rotation, and then it says when the table can be stopped.
 - **Stop at each view** ([Auto mode](Spec.md#auto-mode-stop-at-each-view) and [Manual mode](Spec.md#manual-mode)): the table stops for each still. With `auto: false`, a `position` prompt asks for each view.
@@ -293,7 +310,34 @@ Remote mode doesn't unlock or restore the camera around an extra shot the way th
 
 ## Jobs
 
-Calibration, captures, extra shots and moves are **jobs**. Only one runs at a time. Requests that need the camera or turntable get `409 busy` while one runs. These still work during a job: all `GET`s, `answer`, `DELETE /api/jobs/current`, `DELETE /api/shots/{id}` for shots not in the running job, and `POST /api/camera` during a `move`.
+Calibration, captures, extra shots and moves are **jobs**. Only one runs at a time. Requests that need the camera or turntable get `409 busy` while one runs. These still work during a job: all `GET`s, `answer`, `DELETE /api/jobs/current`, `DELETE /api/shots/{id}` for shots not in the running job, session deletes for sessions the job isn't writing into, and `POST /api/camera` during a `move`.
+
+Jobs come from the phone's own buttons or from the editor (their **source**), and captures go into the shared [capture target](#capture-target), fixed when the job starts. There's only one camera and turntable, so whichever starts first runs, and the other side gets `409 busy` naming it. Either side can stop or answer any job. See [Phone and editor at once](Spec.md#phone-and-editor-at-once).
+
+### Capture target
+
+`GET /api/target` returns `{"target": {kind, sessionId, name, setBy, editorJoined}}`, the same object as in [Status](#get-apistatus):
+
+| `kind` | Captures go into |
+| --- | --- |
+| `session` | That session on the phone (`sessionId`, `name`) |
+| `shots` | The editor's unnamed set of [shots](#shots) |
+| `none` | Nothing yet. The editor's first capture makes it `shots`; the phone's Capture shows its session picker |
+
+`setBy` is who chose it (`phone`, `editor`, or `null` for `none`). `editorJoined` is `true` when the editor chose it or joined it: only then do the editor's captures go into a session. While it's `false`, `POST /api/capture` and `POST /api/extra` answer `409 session_open`.
+
+`POST /api/target` changes it:
+
+| Body | Meaning |
+| --- | --- |
+| `{"session": "<id>"}` | Join that session (normally the one the phone has open): `editorJoined` becomes `true`, and both sides' captures go there |
+| `{"shots": true}` | Start a new set: the phone's session is closed (it's already saved) and the editor's shots become the target, for the phone's captures too |
+
+Errors: `409 busy` while a job runs, `404 not_found` for an unknown session, `400 bad_request` for anything else. Every change, from either side, is pushed as a `target` message, with `by` and the `previous` target, followed by `status`. When the phone opens another session, `editorJoined` is `false` again.
+
+### `POST /api/camera/open`
+
+Body: `{}`. Brings the phone's Capture screen to the front (the app is in the foreground, since the server only runs then) and waits up to 10 s for its camera. Returns `200 {"cameraOpen": true}` straight away if it's already open, `503 camera_unavailable` if it didn't open in time (for example while the phone asks for camera access).
 
 ### Job object
 
@@ -301,6 +345,8 @@ Calibration, captures, extra shots and moves are **jobs**. Only one runs at a ti
 {
   "id": "j-7",
   "kind": "capture",
+  "source": "editor",
+  "target": { "kind": "shots", "sessionId": null, "name": null },
   "params": { "video": true, "auto": true, "setLabel": null },
   "state": "waiting",
   "progress": { "step": 2, "of": 6, "text": "Moving to 90°…" },
@@ -319,6 +365,7 @@ Calibration, captures, extra shots and moves are **jobs**. Only one runs at a ti
   "endedAt": null,
   "result": null,
   "error": null,
+  "stoppedBy": null,
   "shotIds": ["s-11"]
 }
 ```
@@ -329,11 +376,14 @@ Calibration, captures, extra shots and moves are **jobs**. Only one runs at a ti
 | `waiting` | Waiting for an answer to `prompt` |
 | `done` | Finished. `result` is set |
 | `failed` | Stopped by an error. `error` is `{error, message}` using the codes in [Errors](#errors) plus `move_failed`, `ring_lost` and `calibration_failed` |
-| `aborted` | Stopped by `DELETE /api/jobs/current`, by Stop on the phone, or because the app went to the background |
+| `aborted` | Stopped by `DELETE /api/jobs/current`, by Stop on the phone, or because the phone left its Capture screen or the app went to the background |
 
+- `source` is `phone` (started with the phone's buttons) or `editor` (started through this API, from any tab).
+- `target` is where the job's files go: `{"kind": "shots"}` for the editor's shots, `{"kind": "session", "sessionId": "…", "name": "Mk9"}` for a phone session, or `{"kind": "none"}` for jobs that make no files (calibration, moves). Fields that don't apply are `null`.
+- `stoppedBy` is `phone`, `editor` or `null`, set when the job was stopped, so each side can say who stopped it.
 - `progress.step` and `progress.of` are optional (`null`) for jobs without a natural count. `text` is always set while running.
 - For a capture, the steps are one per view, then the spin if `video` is on, then homing. So a full set with video is 6 steps.
-- `shotIds` lists the shots this job has produced so far.
+- `shotIds` lists the shots this job has produced so far. A job writing into a session produces no shots: `shotIds` stays empty, and `filenames` lists the session files written so far (it's `[]` for other jobs).
 - `GET /api/jobs/current` returns the running job, or else the last finished one (so a tab that reconnects can see how it ended), or `null` if there hasn't been one since the app started.
 
 ### Prompts
@@ -370,11 +420,11 @@ On the phone, prompts are the existing dialogs, and the phone dismisses its dial
 
 `DELETE /api/jobs/current` aborts the running job: stop the table (`stop()`), stop any recording, keep the shots already taken, and home if the phone was driving the table (`auto`). Returns the job, which may still be `running` for a moment while it winds down; the final state arrives as a `job` message. `409 no_job` if nothing is running.
 
-Losing the editor doesn't stop a job. If the phone drops off the network mid-capture, the job carries on and **Stop** on the phone still works. If Stop is pressed in the editor while it can't reach the phone, the editor holds the request and sends `DELETE /api/jobs/current` straight after reconnecting, but only if `GET /api/jobs/current` still shows the same job `id` running or waiting. (The app going to the background is different: the server stops, and the job is aborted, as the `aborted` state above says.)
+Losing the editor doesn't stop a job. If the phone drops off the network mid-capture, the job carries on and **Stop** on the phone still works. If Stop is pressed in the editor while it can't reach the phone, the editor holds the request and sends `DELETE /api/jobs/current` straight after reconnecting, but only if `GET /api/jobs/current` still shows the same job `id` running or waiting. (The phone leaving its Capture screen is different: the job is aborted, as the `aborted` state above says. If the app went to the background, the server stops too.)
 
 ## Shots
 
-In remote mode the phone holds **one unnamed set of shots**: no badge identity, slug or `index.md`. The editor decides where they go.
+When the [capture target](#capture-target) is `shots`, the phone holds captures as **one unnamed set of shots**: no name or notes. The editor decides where they go. Like sessions, only web copies are kept: `original` is always `null`.
 
 ### Shot object
 
@@ -393,7 +443,7 @@ In remote mode the phone holds **one unnamed set of shots**: no badge identity, 
   "jobId": "j-7",
   "ready": true,
   "web":      { "mime": "image/jpeg", "bytes": 812345,  "width": 2400, "height": 1800, "filename": "side-090.jpg" },
-  "original": { "mime": "image/jpeg", "bytes": 5123456, "width": 4096, "height": 3072, "filename": "side-090.jpg" },
+  "original": null,
   "durationMs": null
 }
 ```
@@ -402,15 +452,16 @@ In remote mode the phone holds **one unnamed set of shots**: no badge identity, 
 | --- | --- | --- |
 | `view` | `front.jpg`, `side-090.jpg`, `back.jpg`, `side-270.jpg` | `Front`, `Side (90°)`, `Back`, `Side (270°)` |
 | `view` in an extra set | `<set>-front.jpg`, … where `<set>` is `Slugs.kebab(setLabel)` | `With SAOs installed (front)`, … (`View.caption(setLabel)`) |
-| `spin` | `spin.mp4` (original: `spin-source.mp4`) | `Spin` |
-| `spin` in an extra set | `<set>-spin.mp4` (original: `<set>-spin-source.mp4`) | `With SAOs installed (spin)` |
+| `spin` | `spin.mp4` | `Spin` |
+| `spin` in an extra set | `<set>-spin.mp4` | `With SAOs installed (spin)` |
 | `extra` | `Slugs.extraShotName(label, held filenames)`: `lanyard.jpg`, `lanyard-2.jpg` | the label |
 
 - **Re-shooting replaces.** A new `view` or `spin` shot whose `filename` matches a held shot replaces it: the old shot is deleted, and the new one gets a new `id`. Extra shots never replace; they're numbered.
 - **Order.** `GET /api/shots` returns shots in the standard order: the main set's views (front, 90, back, 270), the main spin, then each extra set (views, then spin) in the order the sets were first shot, then extra shots by time. The editor keeps this order.
 - `nominalDeg` and `actualDeg` are measured from where the table was when the capture started (the front view, as the user framed it), so `front` is 0. They're `null` for extra shots and spins, and `actualDeg` is `null` when the ring wasn't read.
 - `ready` is `false` while a spin video is transcoding. It turns `true` with a `shot` message on the WebSocket.
-- `web` describes the file that goes in the badge folder: a 2400 px JPEG at quality 85, or the transcoded MP4. `original` is the full-resolution still or the untrimmed source video. `width` and `height` may be `null` for videos. `durationMs` is set for spins.
+- `web` describes the file that goes in the badge folder: a 2400 px JPEG at quality 85, or the transcoded MP4. `width` and `height` may be `null` for videos. `durationMs` is set for spins.
+- `original` is always `null`: the phone deletes the full-size still or source video once the web copy is made (Spec.md, Output). The field stays so older editors don't break.
 - Shots survive the editor disconnecting and the app being restarted. They're kept in the app's storage until deleted.
 
 ### `GET /api/shots/{id}`
@@ -420,10 +471,10 @@ Returns the file with `Content-Type`, `Content-Length`, `Content-Disposition: at
 | `?variant=` | File |
 | --- | --- |
 | `web` (default) | The web copy |
-| `original` | The full-resolution still or the source video |
+| `original` | Always `404 not_found`: the phone keeps only the web copy |
 | `thumb` | A JPEG about 320 px on the long edge, quality 75. For a spin, a frame from its start. Available as soon as the shot exists, even while `ready` is `false` |
 
-`409 not_ready` for `web` or `original` of a spin that's still transcoding. No `Range` support is needed: the editor downloads whole files.
+`409 not_ready` for `web` of a spin that's still transcoding. No `Range` support is needed: the editor downloads whole files.
 
 ### `DELETE /api/shots/{id}` and `DELETE /api/shots`
 
@@ -431,7 +482,7 @@ Delete one shot (`204`), or all of them (`200 {"deleted": 5}`). `DELETE /api/sho
 
 ### `GET /api/session.json`
 
-The capture record the editor saves as `_capture/<con>/<slug>/session.json` alongside the originals. It mirrors the app's `SessionJson`, without the identity fields:
+The capture record of the held shots: the jobs that made them, the calibration and the camera settings. Older editors saved it to `_capture/` with **Also save originals**; with no originals on the phone, the editor no longer needs it, and it's kept so they don't break:
 
 ```json
 {
@@ -453,6 +504,75 @@ The capture record the editor saves as `_capture/<con>/<slug>/session.json` alon
 
 `jobs` lists the jobs that produced the held shots, oldest first.
 
+## Sessions
+
+Sessions are the badges captured with the phone on its own: a name, optional notes and the files captured for them, kept in the phone's `_badges/` and `_capture/` folders (see [Spec.md § Sessions](Spec.md#sessions)). The editor lists them, pulls one in to work on, and deletes what it no longer needs. It doesn't rename them or change their notes. These endpoints work from any screen; the Capture screen doesn't need to be open.
+
+### Session summary and Session object
+
+`GET /api/sessions` returns `{"sessions": […]}`, newest first, each a summary:
+
+```json
+{
+  "id": "0b6f3c2e-5d1a-4e7b-9a0c-2f4d6e8a1b3c",
+  "name": "Mk9",
+  "createdAt": "2026-11-07T15:02:11.000Z",
+  "updatedAt": "2026-11-07T15:20:47.500Z",
+  "open": true,
+  "busy": false,
+  "hasNotes": true,
+  "mediaCount": 6,
+  "bytes": 14123456,
+  "cover": "front.jpg"
+}
+```
+
+- `id` is opaque and never changes, even when the session is renamed.
+- `updatedAt` changes on every save, capture or delete. The editor can compare it to tell whether a session it pulled in has changed since.
+- `open` is `true` for the session open on the phone's Capture screen. `busy` is `true` while a job is writing into it.
+- `bytes` counts the session's files (web copies and spins).
+- `cover` is the filename of the card thumbnail (`front.jpg`, else the first photo), or `null` when there are no photos. Fetch it with `?variant=thumb`.
+
+`GET /api/sessions/{id}` returns the summary's fields plus:
+
+```json
+{
+  "notes": "Has a hidden game.\n\nHold both buttons at boot.",
+  "media": [
+    {
+      "filename": "side-090.jpg",
+      "kind": "view",
+      "setLabel": null,
+      "view": "side-090",
+      "label": null,
+      "caption": "Side (90°)",
+      "nominalDeg": 90,
+      "actualDeg": 90.6,
+      "takenAt": "2026-11-07T15:10:31.040Z",
+      "ready": true,
+      "web":      { "mime": "image/jpeg", "bytes": 812345,  "width": 2400, "height": 1800, "filename": "side-090.jpg" },
+      "original": null,
+      "durationMs": null
+    }
+  ]
+}
+```
+
+- `notes` is the body of the session's `index.md` (what the phone's Notes field shows), or `""`.
+- Each `media` entry has the [Shot object](#shot-object)'s fields without `id` and `jobId`. `filename` is its key within the session. They're in the same [standard order](#shot-object) as shots, so the editor can add them the way it adds shots. `original` is always `null`, and `ready` always `true`: a spin is added to its session only once it's transcoded.
+
+### `GET /api/sessions/{id}/media/{filename}`
+
+The same as [`GET /api/shots/{id}`](#get-apishotsid): `?variant=web` (default) or `thumb` (made the first time it's asked for), the same headers, and `original` is `404`. `filename` is URL-encoded. `404 not_found` for an unknown session or file.
+
+### `DELETE /api/sessions/{id}/media/{filename}` and `DELETE /api/sessions/{id}`
+
+- **One file:** removes it and its thumbnail, drops it from `session.json`, and returns `204`. `409 busy` while a job is writing into this session.
+- **The whole session:** removes its folder and returns `204`. `409 session_open` (with `sessionId`) while it's the [capture target](#capture-target): the phone moves on first. `409 busy` while a job is writing into it.
+- The phone confirms nothing: the editor asks the user first. A Session screen showing the session on the phone reloads, or closes with a note if the session went.
+
+Each change is pushed as a `session` or `session_removed` message.
+
 ## WebSocket `/api/live`
 
 `ws://<host>:8737/api/live`. One socket per editor tab. Several can be open at once, and they all get the same messages.
@@ -462,7 +582,7 @@ The capture record the editor saves as `_capture/<con>/<slug>/session.json` alon
 1. The client's **first message**, within 5 s, must be `{"type": "auth", "token": "<token>"}`.
 2. The phone replies `{"type": "hello", "api": 1, "deviceId": "…", "name": "…"}`, then a `status` message straight away, then the regular stream.
 
-Close codes from the phone: `4401` bad token, `4408` no auth message within 5 s, `4409` too many clients (more than 4), `1001` the server is stopping (app backgrounded or remote control turned off). The editor reconnects with backoff (1, 2, 4… up to 15 s), except after `4401`.
+Close codes from the phone: `4401` bad token, `4408` no auth message within 5 s, `4409` too many clients (more than 4), `1001` the server is stopping (app backgrounded or remote control turned off). Moving between the app's screens doesn't close the socket; the Capture screen opening or closing shows up as `cameraOpen` in the next `status`. The editor reconnects with backoff (1, 2, 4… up to 15 s), except after `4401`.
 
 The phone sends a WebSocket ping every 15 s and closes a socket that hasn't answered within 30 s. Browsers answer pings on their own.
 
@@ -476,10 +596,13 @@ Every message has a `type`.
 | --- | --- | --- |
 | `hello` | Once, after auth | `api`, `deviceId`, `name` |
 | `status` | About every 500 ms, and on any change to job, calibration or shot count | The [Status](#get-apistatus) object's fields, flattened into the message |
-| `ring` | Every ring reading, at most 5 per second | See below |
+| `ring` | Every ring reading, at most 5 per second, while the Capture screen is open | See below |
 | `job` | Every change to the current job: started, progress, prompt raised or answered, finished | `job`: the [Job object](#job-object) |
 | `shot` | A shot was added, or changed (a spin became `ready`) | `shot`: the [Shot object](#shot-object) |
 | `shot_removed` | A shot was deleted or replaced | `id` |
+| `session` | A session was created, saved, captured into, had a file deleted, or was opened or closed on the Capture screen | `session`: the [Session summary](#session-summary-and-session-object) |
+| `session_removed` | A session was deleted (from the phone or the API) | `id` |
+| `target` | The [capture target](#capture-target) changed, from the phone or a tab | `target`, `previous` (both as in Status), `by` (`phone` or `editor`) |
 | `camera` | Settings changed, from anywhere | `settings` |
 | `countdown` | During an extra shot's or manual still's countdown, once per second | `remainingMs` |
 | `notice` | Something for the user that isn't a job event (for example "Pairing code changed") | `level` (`info`, `warn`), `text` |
@@ -516,7 +639,7 @@ Each binary message is one preview frame: a 16-byte header, then a complete JPEG
 | 16 | … | JPEG |
 
 - Frames come from the `ImageAnalysis` frames the ring detector already gets, scaled so the **upright** frame's long edge is the requested `width`, and JPEG-encoded at quality 70. The phone may rotate the image itself and send rotation 0.
-- Defaults after `hello`: on, 8 fps, 640 px.
+- Defaults after `hello`: on, 8 fps, 640 px. Frames only flow while the Capture screen is open; the socket's preview setting is kept while it's closed.
 - **Backpressure:** keep at most one frame waiting per socket. If one is still waiting when a newer frame is ready, the newer one replaces it. Never queue preview frames behind each other.
 
 ### Editor → phone
@@ -538,11 +661,13 @@ Unknown messages are ignored.
 
 These aren't part of the wire format, but they're what the editor expects. They're implemented in the app's `remote`, `jobs` and `rig` packages.
 
-- **Server lifetime:** start the server, mDNS and the Wi-Fi `MulticastLock` when the Capture screen starts (`onStart`) with remote control on. Stop them in `onStop`, so a dialog over the screen doesn't drop the editor. Stopping closes every WebSocket with `1001`.
+- **Server lifetime:** start the server, mDNS and the Wi-Fi `MulticastLock` when the app comes to the foreground with remote control on, and stop them when it goes to the background: `ProcessLifecycleOwner` (`androidx.lifecycle:lifecycle-process`) `ON_START` and `ON_STOP`, so moving between screens and dialogs doesn't drop the editor. Turning remote control on or off in Settings starts or stops it straight away. Stopping closes every WebSocket with `1001`. The server and the job runner live in the `Rig` (application scope); the Capture screen attaches the camera, ring and sequencer when it starts and detaches them when it stops, aborting any job.
+- **Camera not open:** while no Capture screen is attached, the **Cam** endpoints answer `503 camera_unavailable` before any other check, and `status` has `cameraOpen: false`.
+- **Sessions:** the API reads and deletes through `SessionStore`, the same as the phone's screens, on a background thread. Holding the store's lock around each delete, and checking the running job's target first, keeps a delete from racing a capture into the same session.
 - **Threads:** the server handles each connection on its own thread. Jobs run on the job runner's single thread. Camera calls go through `CameraController`, which already marshals to the main thread. Hold one lock around "is a job running / start a job", so two requests can't both start one.
 - **Prompts:** `CaptureSequencer.Listener.onMoveFailed` and `awaitManualPosition` block on `Job.ask`, which raises a prompt, pushes a `job` message, and returns whichever side answers first (`CompletableFuture.complete` returns `false` for the loser, which maps to `409 prompt_gone`).
 - **Status messages:** `Listener.onStatus(text)` becomes `progress.text`, and `onStep(step, of, text)` sets `progress.step` and `progress.of`.
-- **Remote shots store:** the sequencer writes through a `CaptureTarget`: a badge session, or `RemoteShots`, whose folders are `files/remote/web/`, `files/remote/originals/` and `files/remote/thumbs/`, with a `shots.json` index, so shots survive a restart. `index.md` isn't written, and no sync is queued.
+- **Where captures go:** the sequencer writes through a `CaptureTarget`: `SessionTarget` for a session (`sessions/<id>/`), or `RemoteShots`, whose folders are `files/remote/web/`, `files/remote/scratch/` and `files/remote/thumbs/`, with a `shots.json` index, so shots survive a restart. Full-size stills and source videos go to a scratch file and are deleted once the web copy is made. A job's target is the `Station`'s capture target when it starts (`Station.targetFor(source)`), so switching can't split a job.
 - **Rotation and coordinates:** the analysis frames arrive in sensor orientation. The app rotates each preview frame upright as it scales it, and sends rotation 0. Ring overlay and focus coordinates are in the upright frame, so rotate the detector's points (and un-rotate focus points before building a `MeteringPoint`).
 - **Preview encoding:** encode on the analysis thread only when at least one socket wants a frame and its last frame has gone, and only at the requested fps. Reuse one `ByteArrayOutputStream`.
 - **Large files:** stream shot files with their length, so a 10 MB video isn't loaded into memory.

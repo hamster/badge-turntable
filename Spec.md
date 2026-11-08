@@ -1,6 +1,6 @@
 # Badge Turntable — Spec
 
-Draft 5 · Nov 5, 2026. Background research (IR APIs, viewer libraries, hosting limits) is in [Overview.md](Overview.md). The encoder ring has its own page, [encoder-ring/README.md](encoder-ring/README.md). Where documents disagree, this spec wins.
+Draft 6 · Nov 7, 2026. Background research (IR APIs, viewer libraries, hosting limits) is in [Overview.md](Overview.md). The encoder ring has its own page, [encoder-ring/README.md](encoder-ring/README.md). Where documents disagree, this spec wins.
 
 ## App identity
 
@@ -14,9 +14,9 @@ Draft 5 · Nov 5, 2026. Background research (IR APIs, viewer libraries, hosting 
 
 An Android app, written in Java, that photographs a badge on an IR-controlled turntable inside a light box. The phone's IR blaster drives the turntable. A printed encoder ring on the turntable tells the app the table's real angle, so every move can be checked.
 
-One capture produces four high-resolution stills (0°, 90°, 180°, 270°, with 0° being the front of the badge) and an optional 360° spin video. Extra shots, such as the lanyard or add-ons installed, can be added to the same badge. Everything is written into a badge folder laid out like the repo's, including an `index.md` filled from [_template/index.md](https://github.com/hamster/badges/blob/main/_template/index.md). The folder is saved locally and optionally synced to a Samba share. The rest of the badge details are filled in later on a PC with the web editor.
+One capture produces four high-resolution stills (0°, 90°, 180°, 270°, with 0° being the front of the badge) and an optional 360° spin video. Extra shots, such as the lanyard or add-ons installed, can be added to the same badge. On the phone, a badge is a **session** with just a name and optional notes. Everything is written into a badge folder laid out like the repo's, including an `index.md` filled from [_template/index.md](https://github.com/hamster/badges/blob/main/_template/index.md). The folder stays on the phone until the web editor pulls it in over the network; the rest of the badge details (con, year, group, badge ID, …) are filled in there.
 
-Typing on a phone clamped in a tripod is awkward, so the app can also be driven from the PC. The web editor connects to the phone over the local network, shows a live preview, runs calibration and captures, and saves the photos straight into the repo with the badge details. See [Remote control from the editor](#remote-control-from-the-editor).
+Typing on a phone clamped in a tripod is awkward, so the app can also be driven from the PC. The web editor connects to the phone over the local network, shows a live preview, runs calibration and captures, and saves the photos straight into the repo with the badge details. It can also list the sessions captured on the phone, pull one in to work on, and delete what it no longer needs from the phone. See [Remote control from the editor](#remote-control-from-the-editor).
 
 ## Platform and stack
 
@@ -28,10 +28,7 @@ Typing on a phone clamped in a tripod is awkward, so the app can also be driven 
 | IR | `ConsumerIrManager` | Built-in API, no library needed. Needs the `TRANSMIT_IR` permission (a normal permission, granted at install). |
 | Encoder ring vision | OpenCV Android SDK (`ArucoDetector` in `objdetect`) | Java bindings, available from Maven Central. |
 | Video post-processing | Media3 Transformer | Trim, scale, speed change and H.264 re-encode in Java. |
-| Samba | smbj | Pure-Java SMB2/3 client. |
 | IR learning (optional) | usb-serial-for-android | Reads raw timings from a USB IR receiver (see [Turntable profiles](#turntable-profiles)). |
-| Background sync | WorkManager | Retries, network constraints. |
-| Secrets | Android Keystore | Encrypts the Samba password at rest. `androidx.security-crypto` is deprecated, so don't use it. |
 | Remote control server | Built in (`remote.HttpServer`, `remote.WebSocket`), `java.net` only | About 600 lines: HTTP/1.1 with keep-alive and the WebSocket upgrade, unit tested on the JVM. NanoHTTPD was the plan, but its WebSocket close codes are a fixed enum, so it can't send the API's 4401/4408/4409, and it has been unmaintained since 2016. |
 | Local name | Built in (`remote.MdnsResponder`) | A minimal mDNS responder: answers A queries for `badge-turntable.local` and advertises an `_badge-turntable._tcp` service with SRV and TXT records. It doesn't probe for name conflicts. Needs a Wi-Fi `MulticastLock` while running. Chosen over JmDNS to avoid a dependency that also pulls in SLF4J. |
 
@@ -63,14 +60,23 @@ Typing on a phone clamped in a tripod is awkward, so the app can also be driven 
 
 ## Screens
 
-1. **Sessions (home).** A list of capture sessions, each with a thumbnail, title, con/year, `badge_id`, capture count and, with Samba set up, its sync status (not synced / queued / synced / failed) and a **Sync** button. Actions: **New session**, open a session to **edit/append**, long-press for **Sync** and **Delete**, and **Sync all to Samba** in the menu.
-2. **New/edit session.** Badge identity fields, session options, and the list of captured files, which can be re-captioned, reordered or deleted. See [Sessions](#sessions).
-3. **Capture** (called **Camera** when opened on its own). A full-screen live preview with camera controls, the turntable status, the **Capture** and **Extra shot** buttons, and the auto/manual toggle. Everything happens here, including calibration. It opens from a session, or from the **Camera** button on the Sessions screen without one (*setup mode*), to frame the light box and calibrate without making a badge first. In setup mode, captures go to the shots held for the editor, so **Capture** and **Extra shot** only appear while remote control is on. While a job runs, **Extra shot** becomes **Stop**, and in manual mode **Capture** becomes **Ready**.
-4. **Settings.** Remote control, Samba, turntable/IR, capture defaults, calibration status and the capabilities probe.
+1. **Sessions (home).** A list of the sessions on the phone, newest first, each with a thumbnail (the front photo), the name and the file count. Actions: **New session**, **Camera** (the Capture screen without a session), tap a session to open it, long-press for **Delete**.
+2. **Session.** The name, the notes, the session options and a strip of the captured photos and videos, which can be viewed and deleted. **Save**, and **Open camera**, which saves and opens the Capture screen with this session open, without starting a capture. See [Sessions](#sessions).
+3. **Capture** (called **Camera** when opened without a session). A full-screen live preview with camera controls, the turntable status, the **Capture** and **Extra shot** buttons, and the auto/manual toggle. Everything happens here, including calibration. A button at the top of the right-hand column shows the [capture target](#the-open-session): "Badge: Mk9", "Shots for the editor" or "No badge open". Tapping it opens the session picker. While a job runs, **Extra shot** becomes **Stop**, and in manual mode **Capture** becomes **Ready**.
+4. **Settings.** Remote control and paired PCs, turntable/IR, capture defaults, calibration status and the capabilities probe.
 
 Every screen is landscape only, either way round (`sensorLandscape`), to suit the phone lying sideways in the tripod. Turning it end over end doesn't restart the Capture screen, so the app updates the camera's target rotation itself, keeping stills, video and the ring frames upright.
 
-When remote control is on, the Capture screen also shows the phone's name, address and pairing code, plus which PC is connected, and the app opens straight on the Camera screen (Back goes to Sessions). With the editor doing the typing, screens 1 and 2 are only needed when using the phone on its own.
+When remote control is on, the app opens straight on the Camera screen (Back goes to Sessions), and every screen shows a slim banner with the phone's name, address and pairing code, plus which PC is connected. The editor can connect whichever screen is showing; see [On the phone](#on-the-phone).
+
+### Flows
+
+| | Flow | What happens |
+| --- | --- | --- |
+| 1 | **Camera first** | The app opens on the Camera screen with no session open. The user frames the light box, adjusts the camera and calibrates. **Capture** (or **Extra shot**) with no session open shows the [session picker](#the-open-session): pick a session on the phone or make a new one. That opens it on the Camera screen; the next **Capture** starts the capture. |
+| 2 | **Session first** | On the Sessions screen, **New session**: type the name and optional notes, then **Open camera**. The Capture screen opens with that session open and the preview running. Nothing is captured until **Capture** is pressed. |
+| 3 | **Editor pulls from the phone** | The app is in the foreground on any screen with remote control on. The editor connects, lists the phone's sessions and pulls one in (or deletes from the phone). The camera, turntable-move, calibration and capture endpoints answer `503 camera_unavailable` ("Open the Camera screen on the phone") until the Capture screen is open, and the editor can ask the phone to open it (**Open camera on phone**). |
+| 4 | **Editor captures** | The Capture screen is open, the editor connects and runs calibration and captures. If the phone has a session open, the editor asks its user whether to **join** it or **start a new set**; otherwise its captures start a new unnamed set of shots ([Phone and editor at once](#phone-and-editor-at-once)). |
 
 ## Camera preview and controls
 
@@ -132,7 +138,7 @@ Every role has a **Test** button. A profile can be exported as a Flipper `.ir` f
 
 ### Encoder ring
 
-The table's angle is read from a printed **encoder ring**: a band of ArUco markers (OpenCV `DICT_4X4_50`) wrapped around the turntable rim, facing the camera. [encoder-ring/README.md](encoder-ring/README.md) explains the maths and covers making, printing and fitting the ring. The generator (a browser page and a Node script) prints it on US Letter or A4 paper, or as ZPL for 4×6 in labels.
+The table's angle is read from a printed **encoder ring**: a band of ArUco markers (OpenCV `DICT_4X4_50`) wrapped around the turntable rim, facing the camera. [encoder-ring/README.md](encoder-ring/README.md) explains the maths and covers making, printing and fitting the ring. The generator (a browser page and a Node script) prints it on US Letter or A4 paper, or as ZPL for 4×6 in labels. It also makes an optional **platter top sticker** for a cutter's Print & Cut: a disc with a 0° line toward the camera, 10° ticks, 90° lines and centring rings, so badges go on centred and square ([encoder-ring/README.md](encoder-ring/README.md#platter-top-sticker)).
 
 - Marker *k* is centred at *k* × step degrees. A 200 mm rim with a 16 mm band gets 36 markers at 10°.
 - For each analysis frame (CameraX `ImageAnalysis`, 1600×1200 on the test phones), the app detects the visible markers. Detections that can't be on the band are dropped first (`MarkerFilter`): one more than 1.5 marker heights off a curve through the others (something else in the scene decoded as a marker), one out of angle order across the image (a misread ID), or one whose angle jump is far bigger than its pixel gap allows. Gaps alone don't count against a marker: in poor light only some decode. On the bench at night this dropped 3 bad detections in 191 frames and kept the reading within 0.65°. Ignored detections show as red crosses on the preview. It then fits their horizontal positions to `x = x_axis + A·sin α + B·cos α`, a linear least-squares fit. That gives the table angle θ = atan2(−B, A) along with the axis position and rim radius in the image. With five or more markers, a perspective term then refines the fit (next point).
@@ -175,35 +181,46 @@ If any check fails, the user is prompted to calibrate before an auto capture can
 
 ## Sessions
 
-A session is one physical badge. It holds:
+A session is one physical badge as the phone sees it: a name, some notes and the files captured for it. The phone keeps it generic on purpose. Con, year, group, event and badge ID are badge details, entered in the web editor, which has the repo open and can check slugs and badge IDs against it.
 
-- **Identity:**
-  - `title`, `con` (picked from the template's list), `year` and `group`, plus an optional `event`.
-  - `slug`: generated as `{group}-{title}-{year}` in lowercase kebab-case, following existing slugs like `dczia-mk9-2026`. It can be edited.
-  - `badge_id`: see [Badge ID](#badge-id).
+A session holds:
+
+- **Name** (required), such as "Mk9". **Save** and **Open camera** stay greyed out until there is one, with the reason beside them.
+- **Notes** (optional): free text, Markdown allowed. The editor makes them the body of the badge's `index.md` (see [`index.md`](#indexmd)).
 - **Options:** `captureVideo` and `autoMode`. New sessions start with the options used last time. **Automatic turntable** is greyed out, with the reason, when the phone has no IR blaster or the turntable profile has no remote.
-- **Save** stays greyed out until there's a title and the badge ID is valid or blank, with the reason beside it.
-- **Captures:** a history of each capture run, with the stills taken (nominal and actual angle, timestamp), the video, extra shots, the camera settings and the calibration in use.
+- **Media:** the web copies of the photos and videos captured, in the [standard order](#extra-shots), each with its caption, angles (nominal and actual) and time.
 
-**New session:** fill in the identity fields, then go to the Capture screen.
+The phone has no con, year or slug for a session. Its folder is named after its ID ([Folder layout](#folder-layout)), and the editor picks the con and slug when it saves the badge into the repo.
 
-**Edit / append:**
+### Session screen
+
+Opening a session from the Sessions list shows its name and notes, editable, and the **media strip**: a thumbnail for each photo and video (videos marked with a play symbol), with its caption.
+
+- **Tap** a thumbnail to view it full screen in the phone's photo or video viewer.
+- **Long-press** a thumbnail for **Delete**. After a confirmation, the file and its thumbnail are removed. Deleting the front photo makes the first other photo the card thumbnail. A file can't be deleted while a capture is writing into the session.
+- **Save** writes the name, notes and options to `session.json` and returns to the list. It doesn't touch the media list, so a capture running meanwhile isn't undone. **Open camera** saves, then opens the Capture screen with this session open (flow 2). It doesn't start a capture.
+- The strip updates as files are captured or deleted (from a capture, or the editor) while the screen is open. If the session itself is deleted, the screen closes with a note.
+
+Appending works from the Capture screen with the session open:
 - Re-shoot any single view or the whole set. New files replace the old ones.
 - Add [extra shots or extra sets](#extra-shots).
 - Re-record the spin video.
-- Change identity fields. Renaming the slug renames the folder.
+
+Re-captioning and reordering are left to the editor.
+
+### The open session
+
+The phone has one **capture target**, shared by the phone and the editor, and every capture goes into it: an **open session**, the editor's unnamed **shots**, or nothing yet.
+
+- **Open camera** on a session opens it. The **Camera** button on the Sessions screen, and the app's start with remote control on, leave the target as it was (nothing, when the app has just started).
+- **Capture** or **Extra shot** with nothing open shows the **session picker**: **New session…** (name and optional notes, in the dialog), then the phone's sessions, newest first. Picking or creating one opens it and returns to the preview; the next **Capture** starts the capture. **Cancel** opens nothing.
+- Tapping the target button shows the same picker (the open one ticked), plus **Shots for the editor** while an editor is connected (or they're already the target), and **Close session**. It's disabled while a job runs.
+- Switching never loses anything: each file is saved into its session as it's captured.
+- Calibration, moves and Set front don't need a target.
 
 ### Badge ID
 
-The 3-digit hex `badge_id` (the ID stickered on the physical badge) is entered when the session is created. The field is pre-filled with a **suggested ID that doesn't collide with any ID the app knows about**: the highest known ID plus one, so `00E` becomes `00F`. If the user types an ID that's already known, the app warns and names the badge that has it. Leaving the field blank is allowed.
-
-Known IDs come from three places:
-
-1. Sessions on this phone.
-2. The Samba share, if it contains a `_badges/` folder. The app scans the `badge_id:` lines in each `index.md` whenever it can reach the share, and caches the result.
-3. The published site. A small Jekyll-generated `badge-ids.json` (a new file in this repo) lists every `badge_id` with its slug. The URL is set in Settings and defaults to `https://hamster.github.io/badges/badge-ids.json`. The list is cached for offline use.
-
-IDs that exist only in unpushed local changes on a PC can still collide. The web editor already checks for duplicates, so it catches those when the badge is opened there.
+The phone doesn't set a `badge_id`. The editor suggests one from the repo it has open when the session is pulled in, and checks it for duplicates. The site's [`badge-ids.json`](#badge-idsjson-done) is no longer used by the app.
 
 ## Capture sequence
 
@@ -298,14 +315,16 @@ Files and captions:
 | Extra shot | `lanyard.jpg`, `lanyard-2.jpg`, `add-ons-installed.jpg`, … (label in kebab-case, numbered on repeats) | The label, editable |
 | Extra set | `with-saos-front.jpg`, `with-saos-side-090.jpg`, `with-saos-back.jpg`, `with-saos-side-270.jpg`, `with-saos-spin.mp4` | "With SAOs installed (front)", and so on |
 
-In `index.md`, `images:` lists the turntable set first, then extra sets, then extra shots in the order they were taken. `videos:` lists `spin.mp4` and then each extra set's spin. The order can be changed on the session screen before syncing.
+The **standard order** is the turntable set first, then extra sets, then extra shots in the order they were taken, with each set's spin after its views. The phone lists files in this order, and the editor keeps it in `index.md` (`images:`, then `videos:`). The order can be changed in the editor.
 
 ## Output
 
+The phone keeps **only the web copies**, the files that go into the repo. Each still is taken at full size, the web copy is made from it, and the full-size file is deleted; the spin's source recording is deleted once it's transcoded. That keeps the phone's storage small, and nothing is sent to the editor that the site doesn't use.
+
 ### Stills
 
-- Captured at the highest resolution the selected lens offers (`CAPTURE_MODE_MAXIMIZE_QUALITY`, and Camera2 maximum-resolution sensor mode where supported), as JPEG at quality 95. These are the **originals**.
-- A **web copy** goes in the badge folder: 2400 px on the long edge, JPEG at quality 85, aiming for under 1 MB to match the README's image guidance.
+- Captured at the highest resolution the selected lens offers (`CAPTURE_MODE_MAXIMIZE_QUALITY`, and Camera2 maximum-resolution sensor mode where supported), as JPEG at quality 95, to a scratch file.
+- The **web copy** is made from it straight away: 2400 px on the long edge, JPEG at quality 85, aiming for under 1 MB to match the README's image guidance. Then the scratch file is deleted.
 
 | Angle | Filename | Caption |
 | --- | --- | --- |
@@ -323,52 +342,37 @@ The web copy matches the old badge_gui ffmpeg pipeline:
 - `moov` atom at the front of the file (faststart).
 - If one revolution takes longer than 30 s, the clip is sped up to fit.
 
-The source recording (1080p or 4K, untrimmed) is kept as an original.
+The source recording (1080p or 4K, untrimmed) is a scratch file, deleted once the web copy is made.
 
 ### `index.md`
 
-- Generated from [_template/index.md](https://github.com/hamster/badges/blob/main/_template/index.md). The app bundles a copy in its assets, and a Gradle copy task refreshes it at build time from a [badges](https://github.com/hamster/badges) checkout beside this repo, so it doesn't drift from the site.
-- The app fills in `title`, `slug`, `year`, `con`, `event`, `group` and `badge_id`, plus:
-  - the `images:` list, with `front.jpg` first and `highlight: true`, so the front photo is the card thumbnail and the hero image;
-  - a `videos:` block (the template doesn't include one, so the app adds it). The videos get no `highlight`, so the badge page plays the spin video automatically below the images.
-- Everything else keeps the template's defaults and `status: stub`.
-- On append, the app rewrites only the `images:` and `videos:` entries for files it produced, so edits made on the PC are kept.
+The phone doesn't write `index.md`. The editor builds it when it saves the badge into the repo, from [_template/index.md](https://github.com/hamster/badges/blob/main/_template/index.md), with the session's name as `title`, its notes as the Markdown body, and its files in `images:` (with `front.jpg` first and `highlight: true`, so the front photo is the card thumbnail and the hero image) and `videos:` (no `highlight`, so the badge page plays the spin automatically below the images). The editor also sets con, year, slug and badge ID from what the user enters, checked against the repo.
 
 ### Folder layout
 
-The same layout is used locally (app-specific storage) and on the share:
+The phone's storage is private to the app, so it isn't laid out like the repo. Each session has one folder, named after its ID, so renaming a session moves nothing and two badges with the same name can't collide:
 
 ```
-<base>/
-  _badges/<con>/<slug>/          # drop-in for the repo's _badges/
-    index.md
+<app files>/sessions/
+  <id>/
+    session.json                 # name, notes, options, and each file's caption, angles and time
     front.jpg  side-090.jpg  back.jpg  side-270.jpg
     spin.mp4
     lanyard.jpg …                # extra shots and sets
-  _capture/<con>/<slug>/         # archive, never published
-    session.json                 # captures, actual angles, camera settings, calibration
-    originals/front.jpg …        # full-resolution stills
-    originals/spin-source.mp4
+    thumbs/<file>.jpg            # 320 px thumbnails, made when first asked for
+  .scratch/                      # full-size stills and source videos while they're processed
+<app files>/remote/              # the shots held for the editor (Remote-API.md, Shots)
 ```
 
-`session.json` and the originals are deliberately kept out of `_badges/`. Jekyll publishes every file in a badge folder as a static file, but it ignores folders starting with `_`, so `_capture/` is never published.
+Scratch files left by a capture the app didn't finish are deleted when the app starts.
 
-## Samba sync
+### Getting sessions off the phone
 
-The share is just a configured place to store data. It might be a checkout of this repo, or a holding area you copy from into the repo later. The layout above works either way:
-- **Holding area:** copy `_badges/<con>/<slug>/` into the repo's `_badges/<con>/`. `_capture/` stays on the share as the archive.
-- **Repo checkout:** files land in place. Add `_capture/` to `.gitignore` so the originals aren't committed.
-
-The app never runs git. Committing stays a PC step.
-
-- **Settings fields:** host, port (default 445), share, base path, domain, username and password (encrypted with the Keystore).
-- **Test connection** runs each step and reports pass/fail for each: resolve host → connect → authenticate → open share → list the base path → write and delete a test file.
-- **How sync runs:** sync is manual. **Sync** on a session (the row's button, or long-press) or **Sync all to Samba** in the Sessions menu queues a WorkManager job, which uploads the session's changed files, compared by size and modified time, when the network is available. Each file is written to a temporary name and then renamed, so a half-uploaded file never looks complete. A session changed after syncing shows as not synced again.
-- **Clashes:** if a new session's slug already exists on the share, the app warns before overwriting. Appending to an existing session merges into its folder.
+Sessions leave the phone through the web editor ([Sessions from the phone](#sessions-from-the-phone)), which writes them into the repo. The app never runs git. Committing stays a PC step. (Samba sync was dropped on Nov 7, 2026.)
 
 ## Remote control from the editor
 
-The phone sits in a tripod, where typing is awkward and the screen is hard to see. Instead, the web editor at `/edit/` can drive the app from the PC: find the phone on the network, show a small live preview, run calibration and captures (including extra shots), and save the photos straight into the repo along with the badge's details. No server runs on the PC: the phone is the server, and the editor page talks to it directly from JavaScript.
+The phone sits in a tripod, where typing is awkward and the screen is hard to see. Instead, the web editor at `/edit/` can drive the app from the PC: find the phone on the network, show a small live preview, run calibration and captures (including extra shots), pull in sessions captured on the phone, and save the photos straight into the repo along with the badge's details. No server runs on the PC: the phone is the server, and the editor page talks to it directly from JavaScript.
 
 ```mermaid
 flowchart LR
@@ -403,7 +407,7 @@ A web page can't browse mDNS or broadcast on the network, so true discovery isn'
 
 1. **A fixed name.** The app answers mDNS for `badge-turntable.local` (the name is set in Settings, e.g. `badge-turntable-2` for a second phone) and also advertises an `_badge-turntable._tcp` service for other tools. The editor probes each known name, so on most networks the phone just appears. Windows 10 and later resolve `.local` names.
 2. **Remembered devices.** Every phone the editor has paired with is kept in `localStorage`, by both name and last IP address.
-3. **Add by address.** The phone's Capture screen shows its name, IP address and port. Typing these once covers networks where `.local` doesn't resolve, for example some VPNs, or Wi-Fi with client isolation or multicast filtering.
+3. **Add by address.** The phone's remote-control banner shows its name, IP address and port. Typing these once covers networks where `.local` doesn't resolve, for example some VPNs, or Wi-Fi with client isolation or multicast filtering.
 
 A probe is `GET /api/info` with a 1.5 s timeout, sent to every candidate at once. Each phone that answers is listed with its name, model, status and whether it's paired. A DHCP reservation for the phone helps, but isn't needed while `.local` works.
 
@@ -412,18 +416,43 @@ A probe is `GET /api/info` with a 1.5 s timeout, sent to every candidate at once
 The API runs a camera and an IR blaster, so it's not open to anyone on the network:
 
 - **Off by default.** The server only runs while **Settings → Remote control** is on and the app is in the foreground. It listens on Wi-Fi only, on port 8737 (configurable).
-- **Pairing.** On the first connection the phone shows a 6-digit code, and the user types it into the editor. `POST /api/pair` swaps the code for a random 128-bit token, which the editor keeps in `localStorage` for that phone. Codes expire after 2 minutes, and five wrong guesses lock pairing for a minute. The phone stores only SHA-256 hashes of the tokens. **Settings → Remote control** lists paired PCs and can revoke them.
+- **Pairing.** The phone's remote-control banner (on every screen) shows a 6-digit code, and the user types it into the editor. `POST /api/pair` swaps the code for a random 128-bit token, which the editor keeps in `localStorage` for that phone. Codes expire after 2 minutes, and five wrong guesses lock pairing for a minute. The phone stores only SHA-256 hashes of the tokens. **Settings → Remote control** lists paired PCs and can revoke them.
 - **Every request** carries `Authorization: Bearer <token>`, except `/api/info` and `/api/pair`. Browsers can't set headers on a WebSocket, so its first message must be `{"type": "auth", "token": …}`, and the phone closes the socket if it isn't.
 - **Origins.** The phone accepts calls from any origin. CORS only restrains browsers anyway, so the pairing code (shown only on the phone) and the token are what keep other pages and clients out. An allow-list of editor origins only got in the way, for example with a local copy of the editor.
 - **Plain HTTP.** Traffic, including the token, is unencrypted on the LAN. That's acceptable on a home network, and the token can be revoked. If it isn't acceptable, HTTPS would need a certificate the browser trusts for a LAN address, which is a lot of setup for little gain.
 
 ### On the phone
 
-- The server runs while the Capture (Camera) screen is visible and **Settings → Remote control** is on: it starts in `onStart` and stops in `onStop`, closing WebSockets with 1001, so the editor shows the phone as disconnected. A job still running when the screen goes away is stopped, keeping the shots taken. A banner shows the name, address and pairing code, and "Controlled from &lt;PC name&gt;". Local controls still work.
+- **When the server runs:** while the app is in the foreground, on any screen, and **Settings → Remote control** is on. It starts when the app comes to the foreground and stops when it goes to the background (the process lifecycle, not one screen's), closing WebSockets with 1001, so the editor shows the phone as disconnected. Moving between the app's own screens doesn't drop the editor. A banner on every screen shows the name, address and pairing code, and "Controlled from &lt;PC name&gt;". Local controls still work.
+- **What needs the Camera screen:** the camera, the ring and the preview exist only while the Capture screen is open. Until then, camera settings, focus, Set front, moves, calibration and captures answer `503 camera_unavailable` ("Open the Camera screen on the phone"), status reports `cameraOpen: false`, and the WebSocket sends no ring readings or preview frames. Pairing, status, IR button presses, sessions, held shots and the capture target work from any screen. The editor can ask the phone to open its Capture screen (`POST /api/camera/open`); the app is in the foreground, so it's allowed to, and the call returns once the camera is running (or `503` after 10 s, for example while the phone asks for camera access). Leaving the Capture screen stops any job still running, keeping what it captured.
 - **One job at a time.** Calibration, a capture, an extra shot or a move is a job, whether the phone or the editor started it. A command that needs the camera or turntable while a job runs gets `409 busy`. **Stop** on either side aborts the job; on the phone it answers a prompt's Stop if one is showing.
 - **Prompts.** A move failure (**Retry**, **Switch to manual** or **Stop**) is a dialog on the phone and a prompt in the editor. A manual-mode instruction ("Turn the table to 90°", or for the spin, "Start the table turning with its remote…") shows in the status line, answered with **Ready**. A spin by hand without the ring also asks for **Done** once the table has gone a little more than once round. The first answer wins, and the phone closes its dialog when the editor answers first.
-- **Shots.** Captures the editor starts go into one unnamed set of shots held for the editor: no badge identity, slug or `index.md`. Files use the standard names (`front.jpg`, `lanyard.jpg`, …), and the editor decides where they go. They're kept (in `files/remote/`, indexed by `shots.json`) until the editor deletes them. Captures started on the phone go into the open badge, or, in setup mode, into the editor's shots.
+- **Shots.** The editor's unnamed set: no name or notes, just files with the standard names (`front.jpg`, `lanyard.jpg`, …), and the editor decides where they go. Like sessions, only the web copies are kept. They're kept (in `files/remote/`, indexed by `shots.json`) until the editor deletes them. Every capture, from either side, goes into the [capture target](#the-open-session): a session or these shots.
 - **Not done yet:** Kelvin white balance (reported as unsupported), and backward moves (`by` below 0 is refused with `422`).
+
+### Sessions from the phone
+
+Sessions captured on the phone on its own (flows 1 and 2) reach the repo through the editor (flow 3):
+
+- **List:** the editor lists the phone's sessions: name, date, file count, size and a thumbnail. The list updates live as sessions are added, changed or deleted on the phone.
+- **Pull in:** **Open as new badge** starts a new badge in the editor with the session's name as its title, its notes as the body, and its photos and videos in the media list (web copies, in the standard order, with the standard captions). **Add to this badge** adds the media to the badge already open instead, as the shots tray does. The editor then suggests the slug and badge ID from the repo, and the user fills in the rest.
+- **Save option:** as for shots, **Remove this session from the phone afterwards** (on by default, remembered) deletes it once everything it held has been saved. If anything couldn't be fetched, the session is left on the phone.
+- **Delete:** the editor can delete single files from a session, a whole session, or held shots, each after a confirmation in the editor. The phone removes the files and updates `session.json`.
+- **Read-only otherwise:** the editor doesn't rename sessions or change their notes on the phone; it edits its own copy.
+
+### Phone and editor at once
+
+The phone has one camera and one turntable, but two people may want them: someone at the phone working on a session, and someone at the PC. They share one **capture target** ([The open session](#the-open-session)), and the editor is asked before it captures into a session it didn't choose:
+
+- **The editor detects an open session.** Status reports the target (`target.kind` is `session`, with its name), and whether the editor has joined it. When the editor connects, or the phone opens a session while it's connected, and the editor wants to capture, it asks its user: **Join Mk9**, so its captures go into the phone's session too, or **Start a new set**, an unnamed set of shots for the editor. Until it answers, its captures get `409 session_open`.
+- **Starting a new set** closes the phone's session (already saved: each file is saved into its session as it's captured) and makes the editor's unnamed shots the target. The phone says "The editor started a new set of shots. Mk9 is saved.", and its target button shows "Shots for the editor"; the phone's own captures go there too until the user picks a session again.
+- **Joining** keeps the session open, and the phone says "The editor joined Mk9. Its captures go there too." Both sides' captures go into the session.
+- **With nothing open**, the editor's first capture starts a new set of shots, without asking.
+- **Switching on the phone:** picking another session (or Close session) on the phone changes the target for both. The editor sees a `target` message, and has to join again to capture into the new session.
+- **Still one job at a time.** Whoever starts first runs. The other side's camera and capture commands get `409 busy`, whose message says who is running what ("The phone is capturing Mk9. Wait for it, or stop it."). Every job reports its `source` (`phone` or `editor`) and its `target`, so both sides can show it. The target can't change while a job runs.
+- **Stop is shared.** Either side can stop any job, because it's the only way to stop a spinning table from where you are. The job's `stoppedBy` says who did.
+- **Telling each side:** an editor job shows on the phone's status line as "The editor is capturing Mk9: Turning to 90°…", with **Stop**; a phone job shows in the editor with its source and target, and the editor disables its capture buttons.
+- **Deleting:** the session that's the target can't be deleted from the editor (`409 session_open`) until the phone moves on; on the phone, deleting it closes it first. Single files can be deleted from it when no job is writing to it.
 
 ### API
 
@@ -432,7 +461,10 @@ The full contract, with every request and response, the error codes, jobs and pr
 - JSON over HTTP at `http://<phone>:8737/api/`, with `Authorization: Bearer <token>` on everything except `GET /info` and `POST /pair`.
 - `GET /status` and `GET`/`POST /camera` read and set state. `POST /turntable/press` sends one IR code.
 - Calibration, captures, extra shots and closed-loop moves are **jobs** (`202 {job}`), one at a time. A job raises **prompts** (move failed, turn the table by hand), and the first answer from the phone or any editor tab wins.
-- `GET /shots` lists what the phone holds, in the standard order with standard names and captions. `GET /shots/{id}` downloads the web copy, the original or a thumbnail. `GET /session.json` is the capture record for `_capture/`.
+- `GET /shots` lists what the phone holds for the editor, in the standard order with standard names and captions. `GET /shots/{id}` downloads the web copy or a thumbnail.
+- `GET /sessions` lists the sessions captured on the phone, and `GET /sessions/{id}` gives one with its name, notes and media. Files download from `/sessions/{id}/media/{filename}`, and `DELETE` removes a file or a whole session.
+- `GET`/`POST /target` reads and sets the capture target: join a session, or start a new set of shots.
+- Camera, turntable-move, calibration and capture endpoints answer `503 camera_unavailable` until the Capture screen is open, and `POST /camera/open` asks the phone to open it. Everything else works from any screen.
 - The WebSocket `/live` authenticates with its first message, then streams status, ring readings (with marker positions for the overlay), job and shot events, and binary preview frames (a 16-byte header, then a JPEG). Preview frames come from the `ImageAnalysis` frames the ring detector already gets, at about 8 fps and 640 px, so no extra camera stream is needed.
 
 ### In the editor
@@ -443,18 +475,20 @@ A **Turntable** panel in `/edit/` (its own script and styles, [edit/turntable.js
 - **Preview:** the live JPEG frames, with the ring overlay (axis and markers), an optional thirds grid, and the table and ring angle readout. Click to focus on a spot (focus only, not exposure): it stays there, marked with a ring, until **Back to auto**, and a capture replaces it with its own centre focus, so it's mainly for extra shots of a detail. Under the preview: lens (if there's more than one), zoom, **Brightness** (exposure compensation; exposure stays automatic) and a focus line saying what focus is doing. **More camera settings** folds away manual exposure (ISO and shutter), manual focus distance, white balance (presets or Kelvin) and **Hold** boxes for exposure, focus and white balance (the AE, AF and AWB locks). All are built from the phone's capabilities and locked while a sequence runs.
 - **Turntable:** the calibration summary and where the front is set, **Calibrate**, **Step 90°** (a checked move once calibrated, otherwise the raw step button), **Home**, **Set front**, **Go to** an angle, and a Test button for each role. The readout under the preview shows how far the table is from the front.
 - **Capture:** a choice of **Main views** or **Extra set:** with a label, then four buttons. **Auto capture** (shown only when the phone has IR for the table, and enabled once it's calibrated) has the phone turn the table for the four stills and then record the spin. **Capture both** does the same by hand, and **Capture stills** and **Capture spin** do one part each by hand. By hand, the phone says what to do with the table, and that depends on its **Capture method**: with **Spin** (the default), start the table turning and stop it when told, and the stills are taken as it passes each angle; with **Stop at each view**, a prompt asks for each view. For a spin on its own, a prompt asks the user to start the table's motor, then says when it can stop (see [Seamless spin loop](#seamless-spin-loop)). A line under the buttons says which applies. Then **Extra shot** with the same label chips as the phone, **Stop**, and a progress line. If the phone drops out of contact mid-job (no message for 4 s), the panel says so and disables the controls, and the job carries on on the phone, where **Stop** still works. **Stop** in the editor is held and sent when the phone is back, if the same job is still running. The countdown shows over the preview. Prompts appear as a dialog that leaves the preview usable, with a dial of the table's angle against the target in manual mode.
-- **Shots tray:** thumbnails of what the phone holds, with angle and size. **Add** or **Add all to badge** downloads the web copies and adds them to the editor's media list, the same way a drag-and-drop does. They keep their standard names and captions, in the [standard order](#extra-shots), with `front.jpg` highlighted if nothing else is. A re-shot file replaces the entry with the same name. Shots already added are marked. Each shot can be deleted from the phone, and **Delete all on phone** clears them.
+- **Camera on the phone:** while the phone isn't on its Camera screen, the preview area says so, with **Open camera on phone**.
+- **Target:** a line saying where captures go ("Into Mk9 on the phone", "New set of shots"). When the phone has a session open that the editor hasn't joined, a prompt asks **Join Mk9** or **Start a new set** before the first capture.
+- **Phone sessions:** the sessions captured on the phone, with thumbnail, name, date and file count, updated live. Each has **Open as new badge**, **Add to this badge** and **Delete from phone**; opening one shows its files, each of which can be deleted from the phone. See [Sessions from the phone](#sessions-from-the-phone).
+- **Shots tray:** thumbnails of what the phone holds for the editor, with angle and size. **Add** or **Add all to badge** downloads the web copies and adds them to the editor's media list, the same way a drag-and-drop does. They keep their standard names and captions, in the [standard order](#extra-shots), with `front.jpg` highlighted if nothing else is. A re-shot file replaces the entry with the same name. Shots already added are marked. Each shot can be deleted from the phone, and **Delete all on phone** clears them.
 
-Then the editor works as it does today: the user fills in the fields, the badge ID suggestion comes from the repo it has open, and **Save** writes `_badges/<con>/<slug>/`. Two options appear when shots came from the turntable:
+Then the editor works as it does today: the user fills in the fields, the badge ID suggestion comes from the repo it has open, and **Save** writes `_badges/<con>/<slug>/` with the web copies. When shots or a session came from the turntable, one option appears:
 
-- **Also save originals** (off by default, remembered): writes the full-resolution stills, the source video and `session.json` to `_capture/<con>/<slug>/` in the same repo folder. Jekyll ignores folders starting with `_`, and `_capture/` gets added to `.gitignore`, so the originals are neither published nor committed.
-- **Remove the saved shots from the phone afterwards** (on by default). Only shots that went into the badge are removed; anything not added stays on the phone. If an original can't be fetched, that shot is left on the phone too.
+- **Remove from the phone afterwards** (on by default, remembered). Only shots that went into the badge are removed, or the session once all of it was saved; anything not added stays on the phone. The old **Also save originals** option is gone: the phone no longer keeps originals.
 
 ### What this changes elsewhere
 
-- **Phone screens:** Sessions and New/edit session stay, for using the phone on its own, but they're no longer the main path.
-- **`index.md` and badge IDs on the phone:** only used without the editor. In remote mode the editor builds `index.md` and suggests the ID.
-- **Samba:** optional, and moves to a later phase. Files reach the repo through the editor instead.
+- **Phone screens:** Sessions and the Session screen stay, for capturing with the phone on its own; the editor pulls those sessions in later.
+- **`index.md`:** built only by the editor. The phone keeps a name, notes and the files.
+- **Samba:** dropped. Files reach the repo through the editor.
 
 ### Risks to check first
 
@@ -471,7 +505,7 @@ The app depends on, or benefits from, these changes to the badge museum site its
 
 ### `badge-ids.json` (done)
 
-[badge-ids.json](https://github.com/hamster/badges/blob/main/badge-ids.json) is a Jekyll page that lists every `badge_id` with its `slug` and `con`. The app uses it to suggest IDs (see [Badge ID](#badge-id)).
+[badge-ids.json](https://github.com/hamster/badges/blob/main/badge-ids.json) is a Jekyll page that lists every `badge_id` with its `slug` and `con`. The app used it to suggest IDs; since the phone no longer sets badge IDs ([Badge ID](#badge-id)), only the editor's checks are left to use it.
 
 ### Publish-time media (done)
 
@@ -489,48 +523,47 @@ The app depends on, or benefits from, these changes to the badge museum site its
 
 ### Editor Turntable panel (built; the app side is written, not yet tested together)
 
-A **Turntable** panel in `/edit/` that drives the phone over the LAN and saves its shots with the badge. See [Remote control from the editor](#remote-control-from-the-editor). `_capture/` is in `.gitignore` for the optional originals. It's tested end to end against the [mock phone](badge-turntable/remote-mock/README.md), but not yet against the real app or from the GitHub Pages origin.
+A **Turntable** panel in `/edit/` that drives the phone over the LAN and saves its shots with the badge. See [Remote control from the editor](#remote-control-from-the-editor). It's tested end to end against the [mock phone](badge-turntable/remote-mock/README.md), but not yet against the real app or from the GitHub Pages origin.
 
 ## Build phases
 
 The order puts a usable tool in hand early, before the riskier IR and vision work.
 
-The app is in [badge-turntable/](badge-turntable/). It builds with Gradle and has run on the OnePlus 13 and a OnePlus 9 Pro. It covers the screens, camera, ring detector, turntable control, calibration, spin and stop-at-each-view captures, the transcoder, Samba sync and remote control. [badge-turntable/README.md](badge-turntable/README.md) lists what's missing.
+The app is in [badge-turntable/](badge-turntable/). It builds with Gradle and has run on the OnePlus 13 and a OnePlus 9 Pro. It covers the screens, camera, ring detector, turntable control, calibration, spin and stop-at-each-view captures, the transcoder and remote control. [badge-turntable/README.md](badge-turntable/README.md) lists what's missing.
 
 1. **Camera and manual capture.**
    - Capabilities probe, preview and camera controls, light box profile.
-   - Sessions with badge ID suggestions, plus `badge-ids.json` on the site.
-   - Manual-mode stills, extra shots, `index.md` and the folder writer.
+   - Sessions (name and notes), the session screen with the media strip, plus `badge-ids.json` on the site.
+   - Manual-mode stills, extra shots, and the session folders (web copies only).
 
    This is already useful with the table turned by hand.
 2. **Remote control.** The API ([Remote-API.md](Remote-API.md)), a mock phone and the editor's Turntable panel and save options are done. On the phone: start with the spike from [Risks to check first](#risks-to-check-first), then the server, mDNS name, pairing, preview WebSocket and shots API. Calibration and capture commands start with manual mode and are completed as phases 4–6 land. The app side is written and unit tested, and works over Wi-Fi from the PC with curl (Nov 5, 2026). Next is the end-to-end test from the editor, starting with the risks above.
 3. **IR and profiles.** Build the profile for your turntable, the Custom setup screens, `.ir` import and the test buttons, and prove that IR reflected inside the light box moves the table.
-4. **Encoder ring.** The generator is done ([encoder-ring/](encoder-ring/)). This phase adds the detector, the live angle overlay, the manual-mode dial and the ring check.
+4. **Encoder ring.** The generator, and the platter top sticker, are done ([encoder-ring/](encoder-ring/)). This phase adds the detector, the live angle overlay, the manual-mode dial and the ring check.
 5. **Calibration and auto mode.** Motion calibration, closed-loop moves, the auto sequence, extra sets and failure handling.
 6. **Spin video.** Recording with an angle log, trimming to one revolution, transcoding. Still to do: the [seamless loop](#seamless-spin-loop) rules for spins recorded by hand or without the ring (start recording at a steady speed, cut after a lead-in, match frames without the ring).
-7. **Samba (optional).** Settings, test connection, sync worker and manual sync from the Sessions list. Only needed for using the phone without the editor.
+7. **Sessions over the API.** Written and unit tested in the app and the mock (Nov 7, 2026), not yet tried on the phone: the server on every screen (process lifecycle), `cameraOpen`, `503 camera_unavailable` without the Capture screen and `POST /camera/open`, the shared capture target with the session picker, join or new set, the `/api/sessions` endpoints and messages, job `source`, `target` and `stoppedBy`, and web copies only. Still to do: the editor's side (**Open camera on phone**, the join prompt, **Phone sessions**, and dropping **Also save originals**) in the badges repo. (This replaces the Samba phase, dropped Nov 7, 2026.)
 8. **IR learning.** The USB receiver and firmware, encoder-ring scanning, and the camera-learning spike.
 
 ## Decided
 
 - **Hero media:** the front photo. The spin video isn't highlighted and plays automatically below the images.
 - **Naming:** `front`, `side-090`, `back`, `side-270`.
-- **Badge ID:** entered at capture time, pre-filled with a suggestion that doesn't collide with known IDs.
-- **Samba:** a plain storage location. It may or may not be a repo checkout.
+- **Sessions on the phone are generic:** a name and optional notes. Con, year, group, event and badge ID are entered in the editor, which also suggests the badge ID (Nov 7, 2026).
+- **No Samba:** sessions reach the repo through the editor (Nov 7, 2026).
 - **Phone:** OnePlus 13, on a tripod outside the light box.
 - **Language:** Java.
 - **Turntable:** JAYEGT 5.74 in, with step and homing buttons.
-- **Photos in the repo:** the 2400 px web copies. Full resolution stays in `_capture/`.
+- **Only web copies:** the phone keeps the 2400 px stills and the transcoded spin, and deletes the full-size files once they're made. The repo gets the same web copies; there are no originals to archive (Nov 7, 2026).
+- **No con, year or slug on the phone:** a session's folder is named after its ID, and the phone doesn't write `index.md`; the editor does both (Nov 7, 2026).
+- **One capture target, shared:** the editor joins the phone's open session or starts a new set of shots; it's asked before capturing into a session it didn't choose (Nov 7, 2026).
+- **The editor can open the Camera screen** on the phone (Nov 7, 2026).
+- **The session picker only opens a session;** the next Capture starts the capture (Nov 7, 2026).
+- **Platter top sticker:** made by the encoder-ring generator, for Print & Cut (Nov 7, 2026).
 - **Badge details are entered on the PC:** the web editor drives the phone over the LAN ([Remote control from the editor](#remote-control-from-the-editor)). The phone's own session screens stay, for use without a PC.
 
 ## Open questions
 
 Each question has a proposed default in brackets.
 
-1. **Encoder ring design:** decided, ArUco band (the rim is 9.6 mm; see [Encoder ring](#encoder-ring)).
-2. **JAYEGT measurements:** the real seconds per revolution at each speed. The diameter (145.3 mm) and rim height (9.6 mm) are measured.
-3. **IR codes:** captured with an IguanaIR receiver ([ir-tools/](ir-tools/)). The unlabeled button (0x46) turned out to be the 90° step. Back to Set needs Set Origin first. The unused codes have been tried: only 0x19 does anything (the same as On/Pause). ASA only controls swing mode, so no turntable setting has to be left in a particular position for auto capture.
-4. **Media hosting:** the plan doc chose Cloudflare R2 for web media, with only JSON and thumbnails in the repo. This spec keeps the web copies in the repo and uses build-time thumbnails to cut bandwidth. Is R2 still wanted? [Not for now: thumbnails first, revisit R2 when the site nears 1 GB or 100 GB/month.]
-5. **Remote control port and name:** [Port 8737, name `badge-turntable`, both changeable in Settings.]
-6. **Originals from remote captures:** should **Also save originals** default to on? [Off: originals are about 10× the size of the web copies, and the phone keeps them until cleared.]
-7. **Top sticker:** the plan doc also proposes a print-and-cut alignment sticker for the platter top (zero line, 90° ticks, centering rings, cut on a Silhouette Cameo). Should the generator make that too? [Yes, as an SVG for Print & Cut, once the platter is measured.]
+1. **Sticker direction:** the sticker's 90° and 270° labels go clockwise seen from above. Does that match the way the JAYEGT turns for the 90° view (Turn Right)? [Check on the table; if not, add a `--counterclockwise` option.]
