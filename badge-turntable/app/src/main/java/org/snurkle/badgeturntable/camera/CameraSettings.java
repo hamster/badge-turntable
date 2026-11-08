@@ -2,6 +2,8 @@ package org.snurkle.badgeturntable.camera;
 
 import android.content.SharedPreferences;
 
+import org.snurkle.badgeturntable.media.SideBars;
+
 /**
  * The light box profile: every camera setting the phone or the editor can change, saved so
  * it's restored on launch (the light box doesn't change between badges). Field names and
@@ -22,6 +24,33 @@ public final class CameraSettings {
     public boolean aeLock, awbLock, afLock;
     /** The focus distance held while afLock is on. Negative if unknown. */
     public float afLockDiopters = -1f;
+    /**
+     * Side bars (SideBars): painted over the sides of the views and the spin. The positions
+     * are kept while they're off, so a wide badge can turn them off and the next one back on.
+     * Fractions of the upright frame's width, 0 to SideBars.MAX. Not a camera setting as
+     * such, but it belongs to the framing, so it lives with the light box profile.
+     */
+    public boolean barsEnabled;
+    public float barLeft, barRight;
+
+    public SideBars bars() {
+        return new SideBars(barsEnabled, barLeft, barRight);
+    }
+
+    /** Whether only the side bars differ: nothing for the camera to apply. */
+    public boolean onlyBarsDiffer(CameraSettings o) {
+        return (barsEnabled != o.barsEnabled || barLeft != o.barLeft || barRight != o.barRight)
+                && sameCamera(o) && zoom == o.zoom;
+    }
+
+    /** Every setting the camera applies, except zoom. */
+    public boolean sameCamera(CameraSettings o) {
+        return java.util.Objects.equals(lens, o.lens) && ev == o.ev && iso == o.iso
+                && shutterNs == o.shutterNs && focusDiopters == o.focusDiopters && kelvin == o.kelvin
+                && aeLock == o.aeLock && awbLock == o.awbLock && afLock == o.afLock
+                && exposureMode.equals(o.exposureMode) && focusMode.equals(o.focusMode)
+                && whiteBalance.equals(o.whiteBalance);
+    }
 
     public boolean manualExposure() {
         return "manual".equals(exposureMode);
@@ -47,6 +76,9 @@ public final class CameraSettings {
         c.awbLock = awbLock;
         c.afLock = afLock;
         c.afLockDiopters = afLockDiopters;
+        c.barsEnabled = barsEnabled;
+        c.barLeft = barLeft;
+        c.barRight = barRight;
         return c;
     }
 
@@ -70,6 +102,9 @@ public final class CameraSettings {
         s.awbLock = p.getBoolean("awbLock", false);
         s.afLock = p.getBoolean("afLock", false);
         s.afLockDiopters = p.getFloat("afLockDiopters", -1f);
+        s.barsEnabled = p.getBoolean("barsEnabled", false);
+        s.barLeft = SideBars.clamp(p.getFloat("barLeft", 0f));
+        s.barRight = SideBars.clamp(p.getFloat("barRight", 0f));
         return s;
     }
 
@@ -88,6 +123,9 @@ public final class CameraSettings {
                 .putBoolean("awbLock", awbLock)
                 .putBoolean("afLock", afLock)
                 .putFloat("afLockDiopters", afLockDiopters)
+                .putBoolean("barsEnabled", barsEnabled)
+                .putFloat("barLeft", barLeft)
+                .putFloat("barRight", barRight)
                 .remove("wb");
         if (lens == null) e.remove("lens");
         else e.putString("lens", lens);

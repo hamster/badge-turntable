@@ -105,6 +105,16 @@
             android:layout_height="wrap_content"
             android:text="@string/set_front" />
 
+        <!-- Side bars: paint over the sides of the views and spin; drag them on the preview -->
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/bars"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:maxLines="1"
+            android:text="@string/side_bars"
+            android:textAppearance="?attr/textAppearanceBodyMedium"
+            android:textColor="@android:color/white" />
+
         <View
             android:layout_width="0dp"
             android:layout_height="0dp"

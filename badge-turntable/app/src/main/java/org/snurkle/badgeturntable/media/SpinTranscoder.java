@@ -22,7 +22,10 @@ import androidx.media3.transformer.ExportResult;
 import androidx.media3.transformer.Transformer;
 import androidx.media3.transformer.VideoEncoderSettings;
 
+import androidx.media3.common.Effect;
+
 import java.io.File;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -45,9 +48,11 @@ public final class SpinTranscoder {
     /**
      * @param startUs clip start, from the angle log (relative to the recording start)
      * @param endUs   clip end, one revolution later
+     * @param bars    side bars to paint over every frame (SideBars.NONE for none)
      * Blocks until done; call off the main thread.
      */
-    public static void transcode(Context context, File source, File dest, long startUs, long endUs) throws Exception {
+    public static void transcode(Context context, File source, File dest, long startUs, long endUs,
+                                 SideBars bars) throws Exception {
         double seconds = (endUs - startUs) / 1e6;
         // TODO: if one revolution is over 30 s, speed the clip up to fit (EditedMediaItem speed
         //  control in newer Media3). At the JAYEGT's 15 s/rev setting this doesn't arise.
@@ -60,9 +65,12 @@ public final class SpinTranscoder {
                         .setEndPositionUs(endUs)
                         .build())
                 .build();
-        Effects effects = new Effects(Collections.emptyList(), List.of(
-                Presentation.createForWidthAndHeight(1080, 1080, Presentation.LAYOUT_SCALE_TO_FIT),
-                FrameDropEffect.createDefaultFrameDropEffect(24f)));
+        List<Effect> video = new ArrayList<>();
+        // The bars first, on the full-size upright frame (as the stills get them), before scaling.
+        if (bars.active()) video.add(new SideBarsEffect(bars));
+        video.add(Presentation.createForWidthAndHeight(1080, 1080, Presentation.LAYOUT_SCALE_TO_FIT));
+        video.add(FrameDropEffect.createDefaultFrameDropEffect(24f));
+        Effects effects = new Effects(Collections.emptyList(), video);
         EditedMediaItem edited = new EditedMediaItem.Builder(item)
                 .setRemoveAudio(true)
                 .setEffects(effects)

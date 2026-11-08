@@ -24,6 +24,7 @@ import org.snurkle.badgeturntable.jobs.ApiException;
 import org.snurkle.badgeturntable.jobs.Job;
 import org.snurkle.badgeturntable.jobs.JobRunner;
 import org.snurkle.badgeturntable.jobs.Json;
+import org.snurkle.badgeturntable.media.SideBars;
 import org.snurkle.badgeturntable.motion.Calibration;
 import org.snurkle.badgeturntable.motion.Calibrator;
 import org.snurkle.badgeturntable.motion.MoveFailedException;
@@ -450,7 +451,9 @@ public final class Rig {
                 "whiteBalance", s.whiteBalance, "kelvin", s.kelvin,
                 "aeLock", s.aeLock, "awbLock", s.awbLock, "afLock", s.afLock,
                 "focusPoint", point == null ? null
-                        : Json.obj("x", Math.round(point[0] * 1000) / 1000.0, "y", Math.round(point[1] * 1000) / 1000.0));
+                        : Json.obj("x", Math.round(point[0] * 1000) / 1000.0, "y", Math.round(point[1] * 1000) / 1000.0),
+                "bars", Json.obj("enabled", s.barsEnabled,
+                        "left", Math.round(s.barLeft * 1000) / 1000.0, "right", Math.round(s.barRight * 1000) / 1000.0));
     }
 
     public JSONObject cameraCapabilitiesJson() {
@@ -467,7 +470,8 @@ public final class Rig {
                 "shutterNs", range(c.shutterNs),
                 "focusDiopters", c.maxFocusDiopters == null ? null : Json.obj("min", 0.0, "max", (double) c.maxFocusDiopters),
                 "whiteBalance", Json.arr(c.whiteBalance),
-                "kelvin", null);
+                "kelvin", null,
+                "bars", Json.obj("max", Math.round(SideBars.MAX * 1000) / 1000.0));
     }
 
     private static JSONObject range(Range<? extends Number> r) {

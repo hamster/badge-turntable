@@ -204,7 +204,8 @@ Errors: `400 bad_request` (code isn't 6 digits), `401 bad_code` with `attemptsLe
     "shutterNs": { "min": 10000, "max": 1000000000 },
     "focusDiopters": { "min": 0.0, "max": 10.0 },
     "whiteBalance": ["auto", "daylight", "cloudy", "incandescent", "fluorescent", "kelvin"],
-    "kelvin": { "min": 2000, "max": 10000 }
+    "kelvin": { "min": 2000, "max": 10000 },
+    "bars": { "max": 0.4 }
   },
   "settings": {
     "lens": "2",
@@ -220,7 +221,8 @@ Errors: `400 bad_request` (code isn't 6 digits), `401 bad_code` with `attemptsLe
     "aeLock": false,
     "awbLock": false,
     "afLock": false,
-    "focusPoint": null
+    "focusPoint": null,
+    "bars": { "enabled": false, "left": 0.0, "right": 0.0 }
   }
 }
 ```
@@ -231,8 +233,13 @@ Errors: `400 bad_request` (code isn't 6 digits), `401 bad_code` with `attemptsLe
 - **`focusMode`**: `auto` is continuous AF, and `afLock` holds the current focus. `manual` uses `focusDiopters` (0 is infinity, larger is closer).
 - **`focusPoint`**: `{"x", "y"}` while autofocus is held on a point clicked in the editor ([`POST /api/camera/focus`](#post-apicamerafocus)), otherwise `null`. Read-only: `POST /api/camera` ignores it. It goes back to `null` when focus is cleared, when `focusMode` becomes `manual`, `afLock` is turned on or `lens` changes, and when a capture starts (the sequence focuses on the centre itself).
 - **`whiteBalance`**: one of the listed modes. `kelvin` is used only when the mode is `kelvin`.
+- **`bars`**: the [side bars](Spec.md#side-bars). Past them, the views and the spin are painted over with the background just inside each bar, so the light box's edges don't show. `left` and `right` are how far each bar comes in from its edge, as a fraction of the **upright frame's** width (the frame as the preview shows it), from 0 to `capabilities.bars.max`. So the kept part runs from `left` to `1 − right`. `enabled` turns them on and off. The positions are kept while they're off. Extra shots never get them.
+  - The editor should draw them on its preview the way the phone does: shade past each bar, with a line at `left` and at `1 − right`, and let the user drag the lines. On release, send `POST /api/camera` with `{"bars": {"left": …, "right": …}}`. Sending only what changed is fine: `{"bars": {"enabled": true}}` or `{"bars": {"right": 0.12}}`.
+  - The preview frames aren't painted over (the ring needs the whole width), so the shading is the editor's to draw.
+  - Changing only the bars doesn't touch the camera, so it's cheap. Even so, send once on release rather than on every move, so other tabs and the phone aren't flooded with `camera` messages.
+  - A capture reads the bars when it starts and uses them throughout. The capture record in [`session.json`](#get-apisessionjson) holds the values used.
 - **`POST /api/camera`** takes any subset of `settings`, applies it, saves it to the light box profile (as changes made on the phone are), and returns the full `{settings}`. Changing `lens` rebinds the camera, which takes about a second. The response comes after the rebind, and capabilities may differ afterwards, so the editor fetches `GET /api/camera` again.
-  - Values out of range: `400 bad_request` with `field`. Settings the lens doesn't support: `422 unsupported` with `field`. Nothing is applied when either is returned.
+  - Values out of range: `400 bad_request` with `field`. Settings the lens doesn't support: `422 unsupported` with `field`. Nothing is applied when either is returned. For `bars`, `field` names the part that's wrong: `bars`, `bars.enabled`, `bars.left` or `bars.right`.
   - While a `calibrate`, `capture` or `extra` job runs: `409 busy`. AE, AF and AWB are locked during a sequence, so all the shots match.
 - Changes from any source (the phone's own controls, another tab) are pushed to every WebSocket as a `camera` message.
 

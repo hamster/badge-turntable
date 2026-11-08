@@ -88,6 +88,7 @@ The preview shows the light box: the whole 4:3 frame, as the stills are, in the 
 - **Exposure:** auto with EV compensation (**EV −** and **EV +**), or manual ISO and shutter speed from the editor when supported. Exposure lock.
 - **White balance:** auto and presets (daylight, cloudy, incandescent, fluorescent), and a lock from the editor. Manual Kelvin isn't done yet.
 - **Guides** (a switch, remembered): a rule-of-thirds grid, a dashed centre line, and the **ring zone**, a box low in the frame where the ring should sit. It turns green when 8 or more markers are read, all inside the box, and amber with fewer or with markers outside it. The state only changes once it has held for 0.6 s, because the count varies from frame to frame.
+- **Side bars** (a switch under **Set front**): for badges narrower than the light box, so its edges don't show. When on, a bar on each side of the preview shades what's past it. Drag a bar by its line (the white grip marks it) to move it. Turning the bars on with no positions set puts each at 8% of the width. What's past the bars is painted over in the views and the spin (see [Side bars](#side-bars)). The bars are part of the light box profile, so they stay set from badge to badge, and the editor sees and changes them too. Turning them off keeps the positions for next time. They can't be changed while a job runs.
 - **Always shown:** a small box on each marker being read, and the turntable axis the ring fit found. The axis turns green ("Axis centred") within 2% of the centre line, which means the camera is centred on the table.
 
 The light box doesn't change between badges, so all camera settings are saved as a **light box profile** and restored on launch. During a capture sequence, AF, AE and AWB are locked from the moment **Capture** is pressed, so all four stills and the video match.
@@ -343,6 +344,16 @@ The web copy matches the old badge_gui ffmpeg pipeline:
 - If one revolution takes longer than 30 s, the clip is sped up to fit.
 
 The source recording (1080p or 4K, untrimmed) is a scratch file, deleted once the web copy is made.
+
+### Side bars
+
+When the [side bars](#camera-preview-and-controls) are on, everything past them is painted over in the four views' web copies and in the spin, so a light box narrower than the badge's surroundings doesn't show its edges. Extra shots don't get them: they may be reframed or hand-held outside the box.
+
+- **Fill:** row by row, the average of a small grid of samples in a strip just inside the bar (1.2% of the width wide, spread over 4% of the height), so it follows the light box's fall-off from top to bottom. The 4% spread blurs a cutting mat's grid lines into an even band instead of copying each one across as a streak. A 0.6% feather inside the bar blends back into the picture so there's no seam.
+- **Same in both:** the stills do it on the CPU (`SideBars`) and the spin on the GPU as a Media3 effect (`SideBarsEffect`), with the same sample positions, so the stills and the video match. The effect runs on the full-size upright frame, before it's scaled to 1080 px.
+- **Taken at the start:** the bars are read when a capture starts and used for all of it, and they can't be changed while it runs.
+- **Can't be undone:** the full-size originals are deleted once the web copies are made, so a bar set too far in cuts off part of the badge for good. Check the preview's shading before **Capture**, with the badge facing the camera: that's usually when it's widest.
+- The capture record (`camera` in [`session.json`](Remote-API.md#get-apisessionjson)) holds the bar positions used.
 
 ### `index.md`
 

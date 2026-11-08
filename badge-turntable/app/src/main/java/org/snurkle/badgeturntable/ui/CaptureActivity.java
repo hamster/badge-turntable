@@ -34,6 +34,7 @@ import org.snurkle.badgeturntable.camera.CameraSettings;
 import org.snurkle.badgeturntable.jobs.ApiException;
 import org.snurkle.badgeturntable.jobs.Job;
 import org.snurkle.badgeturntable.jobs.JobRunner;
+import org.snurkle.badgeturntable.media.SideBars;
 import org.snurkle.badgeturntable.remote.RemoteServer;
 import org.snurkle.badgeturntable.rig.Rig;
 import org.snurkle.badgeturntable.rig.Station;
@@ -70,7 +71,9 @@ public final class CaptureActivity extends AppCompatActivity implements JobRunne
     private PreviewView preview;
     private FramingOverlay overlay;
     private TextView status, ringText, remoteText;
-    private MaterialSwitch autoSwitch;
+    private MaterialSwitch autoSwitch, barsSwitch;
+    /** Set while showCamera moves the bars switch, so its listener doesn't write the change back. */
+    private boolean showingBars;
     private Button captureButton, extraButton, calibrateButton, wbButton, lensButton, zoomButton, targetButton;
     private ScaleGestureDetector pinch;
     private GestureDetector taps;
@@ -117,6 +120,15 @@ public final class CaptureActivity extends AppCompatActivity implements JobRunne
         guides.setOnCheckedChangeListener((b, on) -> {
             overlay.setGuidesVisible(on);
             rig.prefs.edit().putBoolean("show_guides", on).apply();
+        });
+        // Side bars live in the light box profile (so the editor sees and sets them too).
+        barsSwitch = findViewById(R.id.bars);
+        barsSwitch.setOnCheckedChangeListener((b, on) -> {
+            if (showingBars) return;
+            rig.camera.update(s -> {
+                s.barsEnabled = on;
+                if (on && s.barLeft == 0 && s.barRight == 0) s.barLeft = s.barRight = SideBars.DEFAULT;
+            });
         });
         status = findViewById(R.id.status);
         ringText = findViewById(R.id.ring);
@@ -285,8 +297,12 @@ public final class CaptureActivity extends AppCompatActivity implements JobRunne
         rig.camera.update(s -> s.whiteBalance = next.apiName());
     }
 
-    /** White balance, zoom and lens buttons; after any settings change or rebind. */
+    /** White balance, zoom and lens buttons and the side bars; after any settings change or rebind. */
     private void showCamera(CameraSettings s) {
+        showingBars = true;
+        barsSwitch.setChecked(s.barsEnabled);
+        showingBars = false;
+        overlay.setBars(s.bars());
         wbButton.setText(getString(R.string.wb_label, s.whiteBalance));
         zoomButton.setText(getString(R.string.zoom_label, s.zoom));
         List<CameraController.Lens> lenses = rig.camera.capabilities().lenses;
@@ -504,6 +520,12 @@ public final class CaptureActivity extends AppCompatActivity implements JobRunne
         findViewById(R.id.set_front).setEnabled(!busy);
         autoSwitch.setEnabled(!busy && rig.table != null);
         targetButton.setEnabled(!busy);
+        // The bars are taken when a capture starts; changing them mid-way would mean nothing.
+        barsSwitch.setEnabled(!busy);
+        overlay.setBarsEditable(!busy, busy ? null : (l, r) -> rig.camera.update(s -> {
+            s.barLeft = l;
+            s.barRight = r;
+        }));
     }
 
     // ---- The target and the editor (from any thread) -----------------------------------

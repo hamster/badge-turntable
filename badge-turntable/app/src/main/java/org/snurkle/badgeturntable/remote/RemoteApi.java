@@ -10,6 +10,7 @@ import org.snurkle.badgeturntable.camera.CameraSettings;
 import org.snurkle.badgeturntable.jobs.ApiException;
 import org.snurkle.badgeturntable.jobs.Job;
 import org.snurkle.badgeturntable.jobs.Json;
+import org.snurkle.badgeturntable.media.SideBars;
 import org.snurkle.badgeturntable.rig.Rig;
 import org.snurkle.badgeturntable.rig.Station;
 import org.snurkle.badgeturntable.session.Session;
@@ -353,11 +354,30 @@ final class RemoteApi implements HttpServer.Handler {
         }
         Integer kelvin = body.has("kelvin") ? (int) Math.round(number(body, "kelvin", 2000, 10000)) : null;
         Boolean aeLock = bool(body, "aeLock"), awbLock = bool(body, "awbLock"), afLock = bool(body, "afLock");
+        // Side bars: any of {"enabled", "left", "right"}; left and right are fractions of the width.
+        Boolean barsOn = null;
+        Float barLeft = null, barRight = null;
+        if (body.has("bars")) {
+            Object b = body.opt("bars");
+            if (!(b instanceof JSONObject)) {
+                throw ApiException.badRequest("bars", "bars must be an object with enabled, left and/or right.");
+            }
+            JSONObject bars = (JSONObject) b;
+            if (bars.has("enabled")) {
+                if (!(bars.opt("enabled") instanceof Boolean)) {
+                    throw ApiException.badRequest("bars.enabled", "bars.enabled must be true or false.");
+                }
+                barsOn = (Boolean) bars.opt("enabled");
+            }
+            barLeft = barFraction(bars, "left");
+            barRight = barFraction(bars, "right");
+        }
 
         String fLens = lens, fExposure = exposureMode, fFocus = focusMode, fWb = wb;
         Integer fIso = iso, fEv = ev, fKelvin = kelvin;
         Long fShutter = shutter;
-        Float fZoom = zoom, fDiopters = diopters;
+        Float fZoom = zoom, fDiopters = diopters, fBarLeft = barLeft, fBarRight = barRight;
+        Boolean fBarsOn = barsOn;
         Consumer<CameraSettings> change = s -> {
             if (fLens != null) s.lens = fLens;
             if (fZoom != null) s.zoom = fZoom;
@@ -372,6 +392,9 @@ final class RemoteApi implements HttpServer.Handler {
             if (aeLock != null) s.aeLock = aeLock;
             if (awbLock != null) s.awbLock = awbLock;
             if (afLock != null) s.afLock = afLock;
+            if (fBarLeft != null) s.barLeft = fBarLeft;
+            if (fBarRight != null) s.barRight = fBarRight;
+            if (fBarsOn != null) s.barsEnabled = fBarsOn;
         };
         await(rig.camera.update(change));
         if (lens != null) Thread.sleep(800);  // let the new lens open, so the reply's values are its own
@@ -480,6 +503,18 @@ final class RemoteApi implements HttpServer.Handler {
             throw ApiException.badRequest(field, String.format(Locale.ROOT, "%s must be from %s to %s.", field, fmt(lo), fmt(hi)));
         }
         return d;
+    }
+
+    /** bars.left or bars.right if given (null if not): a fraction of the width, 0 to SideBars.MAX. */
+    private static Float barFraction(JSONObject bars, String side) throws ApiException {
+        if (!bars.has(side)) return null;
+        Object v = bars.opt(side);
+        double d = v instanceof Number ? ((Number) v).doubleValue() : Double.NaN;
+        double max = Math.round(SideBars.MAX * 1000) / 1000.0;  // 0.4, not the float's 0.40000000596
+        if (!(d >= 0 && d <= max + 1e-9)) {
+            throw ApiException.badRequest("bars." + side, "bars." + side + " must be a number from 0 to " + fmt(max) + ".");
+        }
+        return (float) Math.min(d, SideBars.MAX);
     }
 
     private static String fmt(double d) {

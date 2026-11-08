@@ -10,6 +10,10 @@ Where things stand, for picking this up in a new session. The spec is the source
 
 ### State
 
+- **Nov 7, 2026 (night): ring detection fixed for OpenCV 5, side bars.** Built and tested (`:app:testDebugUnitTest :app:assembleDebug`, SideBarsTest added) and run on the phone.
+  - **Ring:** OpenCV 5 returns the ArUco ids as a row, which threw on every frame with 2+ markers and starved the remote preview; `RingDetector` now reads ids and corners by element count, and a failed read still feeds listeners and the preview. Markers are searched for only in the ring zone (a full-frame scan every 500 ms when that finds too few), with `adaptiveThreshConstant` 2 and ArUco3: about 11 markers a frame on the black band, against 2 before. See [TODO.md](TODO.md).
+  - **Side bars** ([Spec](../Spec.md#side-bars)): a switch on the Capture screen and draggable bars on the preview. Past them, the views and the spin are painted over with the background just inside each bar (`SideBars` on the CPU, and `SideBarsEffect`, a Media3 GL effect, on the GPU). They're stored in the light box profile and shown in the API as `bars` in the camera settings, which `POST /api/camera` can change. On the phone: the switch, dragging, the API (including its errors) and a spin transcode with the bars. Not yet: a stills capture with the bars (the table was turning, so the views wouldn't start).
+
 - **Nov 7, 2026 (later): generic sessions, sessions over the API, shared capture target, web copies only.** Built and tested (`:app:testDebugUnitTest :app:lintDebug :app:assembleDebug`, 56 tests, no lint errors) and in the mock; not yet tried on the phone. Spec phase 7.
   - **Storage:** `sessions/<id>/` (session.json and the web copies), named by ID: no con, year, slug or badge ID, and no `index.md` on the phone (`IndexMdWriter`, `BadgeIds`, `KnownBadgeIds`, the bundled template and its Gradle copy task are gone). Full-size stills and source videos go to a scratch file and are deleted once the web copy is made, for sessions and the editor's shots alike. Sessions in the old `museum/` folder aren't read; delete them from the phone's app storage, or reinstall.
   - **`rig.Station`** (one per app, `App.station()`): the job runner, `SessionStore`, `RemoteShots`, the shared capture target, and the `RemoteServer`, which now runs whenever the app is in the foreground (`ProcessLifecycleOwner`). The Capture screen's `Rig` attaches while it's started; without it, camera endpoints answer `503`, and an idle rig answers IR presses and turntable status.
@@ -126,5 +130,5 @@ See [Next](#next) for the immediate work. Beyond that:
 - Manual-mode angle dial (current against target). The status line shows the instruction only.
 - A focus lock and manual focus on the phone (the editor has both).
 - Custom turntable profile editor, USB IR learning, encoder-ring command scan, and the camera IR-learning spike (spec phase 8).
-- The editor's side of Nov 7's API: **Open camera on phone**, the join-or-new prompt, the **Phone sessions** list, and dropping **Also save originals** (badges repo, `edit/turntable.js`).
+- The editor's side of Nov 7's API: **Open camera on phone**, the join-or-new prompt, the **Phone sessions** list, dropping **Also save originals**, and drawing and dragging the side bars on its preview (`bars` in the camera settings) (badges repo, `edit/turntable.js`).
 - Speeding up spin videos longer than 30 s (not needed at the JAYEGT's 15 s/rev).

@@ -410,6 +410,7 @@ public final class CameraController {
                 boolean zoomOnly = onlyZoomDiffers(settings, next);
                 // A focus point only lasts while autofocus is free to use it.
                 if (next.manualFocus() || (next.afLock && !settings.afLock) || rebind) focusPoint = null;
+                CameraSettings prev = settings;
                 settings = next;
                 next.save(prefs);
                 if (rebind && provider != null) {
@@ -420,6 +421,8 @@ public final class CameraController {
                 }
                 if (zoomOnly && camera != null) {
                     camera.getCameraControl().setZoomRatio(next.zoom);  // pinching: keep it light
+                } else if (next.onlyBarsDiffer(prev)) {
+                    // Side bars only: nothing for the camera to do.
                 } else {
                     applyProfile();
                 }
@@ -457,11 +460,7 @@ public final class CameraController {
 
     /** True if b is a with only the zoom changed (a pinch), which needs no other request options. */
     private static boolean onlyZoomDiffers(CameraSettings a, CameraSettings b) {
-        return a.zoom != b.zoom && Objects.equals(a.lens, b.lens) && a.ev == b.ev && a.iso == b.iso
-                && a.shutterNs == b.shutterNs && a.focusDiopters == b.focusDiopters && a.kelvin == b.kelvin
-                && a.aeLock == b.aeLock && a.awbLock == b.awbLock && a.afLock == b.afLock
-                && a.exposureMode.equals(b.exposureMode) && a.focusMode.equals(b.focusMode)
-                && a.whiteBalance.equals(b.whiteBalance);
+        return a.zoom != b.zoom && a.sameCamera(b);
     }
 
     /**

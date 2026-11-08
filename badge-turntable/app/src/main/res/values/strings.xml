@@ -93,6 +93,7 @@
     <string name="setup_mode">Press Capture to pick a badge.</string>
     <string name="remote_banner">%1$s.local · %2$s · code %3$s</string>
     <string name="guides">Guides</string>
+    <string name="side_bars">Side bars</string>
     <string name="remote_no_wifi">no Wi-Fi address</string>
     <string name="remote_controlled_from">%1$s connected</string>
 

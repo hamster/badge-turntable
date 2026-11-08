@@ -1,5 +1,6 @@
 package org.snurkle.badgeturntable.ui;
 
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
@@ -7,8 +8,11 @@ import android.graphics.DashPathEffect;
 import android.graphics.Paint;
 import android.graphics.RectF;
 import android.util.AttributeSet;
+import android.view.MotionEvent;
 import android.view.View;
 
+import org.snurkle.badgeturntable.media.SideBars;
+import org.snurkle.badgeturntable.ring.RingDetector;
 import org.snurkle.badgeturntable.ring.RingReading;
 
 /**
@@ -21,8 +25,9 @@ import org.snurkle.badgeturntable.ring.RingReading;
  * view as the preview.
  */
 public final class FramingOverlay extends View {
-    /** Where the ring should sit, as fractions of the frame: left, top, right, bottom. */
-    static final RectF RING_ZONE = new RectF(0.12f, 0.72f, 0.88f, 1.0f);
+    /** Where the ring should sit, as fractions of the frame; the detector searches only here. */
+    static final RectF RING_ZONE = new RectF(RingDetector.ZONE_LEFT, RingDetector.ZONE_TOP,
+            RingDetector.ZONE_RIGHT, RingDetector.ZONE_BOTTOM);
     /** Enough markers for a strong fit (RingDetector.STRONG_MARKERS). */
     private static final int GOOD_MARKERS = 8;
     /** The axis counts as centred within this fraction of the frame width. */
@@ -62,11 +67,107 @@ public final class FramingOverlay extends View {
     private long focusUntilMs;
     private static final long FOCUS_SHOW_MS = 1500;
 
+    /** Called when the user lets go of a side bar they dragged. Main thread. */
+    public interface BarsListener {
+        void onBarsMoved(float left, float right);
+    }
+
+    // Side bars: what's past them is painted over in the stills and spin, so it's shaded here.
+    private SideBars bars = SideBars.NONE;
+    private boolean barsEditable;
+    private BarsListener barsListener;
+    /** 0 none, 1 the left bar, 2 the right bar. */
+    private int dragging;
+    private float dragLeft, dragRight;
+    private final Paint barShade = new Paint();
+    private final Paint barLine = stroke(Color.WHITE, 2);
+    private final Paint barHandle = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint barGrip = stroke(0xFF333333, 1.5f);
+    private final RectF handleRect = new RectF();
+    /** How close (each side of the line) a touch must land to grab a bar. */
+    private static final float GRAB_DP = 24;
+
     public FramingOverlay(Context context, AttributeSet attrs) {
         super(context, attrs);
         centre.setPathEffect(new DashPathEffect(new float[]{8 * dp, 6 * dp}, 0));
         label.setTextSize(13 * dp);
         label.setShadowLayer(3 * dp, 0, 0, Color.BLACK);
+        barShade.setColor(0xA6000000);
+        barHandle.setColor(Color.WHITE);
+    }
+
+    /** The side bars to show (from the light box profile). Ignored while one is being dragged. */
+    public void setBars(SideBars b) {
+        bars = b;
+        invalidate();
+    }
+
+    /** Whether the bars can be dragged (not while a capture runs). */
+    public void setBarsEditable(boolean editable, BarsListener listener) {
+        barsEditable = editable;
+        barsListener = listener;
+        if (!editable) dragging = 0;
+        invalidate();
+    }
+
+    /**
+     * Drags a side bar by its line. Touches anywhere else return false, so they fall through
+     * to the preview underneath (tap to focus, pinch to zoom).
+     */
+    @Override
+    @SuppressLint("ClickableViewAccessibility")
+    public boolean onTouchEvent(MotionEvent e) {
+        if (!bars.enabled || !barsEditable || image.width() <= 0) return false;
+        float x = e.getX();
+        switch (e.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN: {
+                if (e.getY() < image.top || e.getY() > image.bottom) return false;
+                float grab = GRAB_DP * dp;
+                float dl = Math.abs(x - x(bars.left)), dr = Math.abs(x - x(1 - bars.right));
+                if (Math.min(dl, dr) > grab) return false;
+                dragging = dl <= dr ? 1 : 2;
+                dragLeft = bars.left;
+                dragRight = bars.right;
+                getParent().requestDisallowInterceptTouchEvent(true);
+                return true;
+            }
+            case MotionEvent.ACTION_MOVE:
+                if (dragging == 0) return false;
+                float f = (x - image.left) / image.width();
+                if (dragging == 1) dragLeft = SideBars.clamp(f);
+                else dragRight = SideBars.clamp(1 - f);
+                invalidate();
+                return true;
+            case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_CANCEL:
+                if (dragging == 0) return false;
+                dragging = 0;
+                // Shown where it was let go until the profile's change comes back.
+                bars = new SideBars(true, dragLeft, dragRight);
+                invalidate();
+                if (barsListener != null) barsListener.onBarsMoved(dragLeft, dragRight);
+                return true;
+            default:
+                return dragging != 0;
+        }
+    }
+
+    private void drawBars(Canvas c) {
+        if (!bars.enabled) return;
+        float left = dragging != 0 ? dragLeft : bars.left, right = dragging != 0 ? dragRight : bars.right;
+        float lx = x(left), rx = x(1 - right);
+        if (lx > image.left) c.drawRect(image.left, image.top, lx, image.bottom, barShade);
+        if (rx < image.right) c.drawRect(rx, image.top, image.right, image.bottom, barShade);
+        c.drawLine(lx, image.top, lx, image.bottom, barLine);
+        c.drawLine(rx, image.top, rx, image.bottom, barLine);
+        if (!barsEditable) return;
+        // A grip on each line, so it reads as draggable.
+        float hw = 7 * dp, hh = 26 * dp, cy = image.centerY(), r = 4 * dp;
+        for (float hx : new float[]{lx, rx}) {
+            handleRect.set(hx - hw, cy - hh, hx + hw, cy + hh);
+            c.drawRoundRect(handleRect, r, r, barHandle);
+            for (int i = -1; i <= 1; i++) c.drawLine(hx - hw / 2, cy + i * 5 * dp, hx + hw / 2, cy + i * 5 * dp, barGrip);
+        }
     }
 
     private Paint stroke(int color, float widthDp) {
@@ -118,6 +219,7 @@ public final class FramingOverlay extends View {
         long now = android.os.SystemClock.uptimeMillis();
         int best = bestRecent(now, ok ? r.markers : seen);
         int state = best == 0 ? 0 : inside < seen ? 1 : good || best >= GOOD_MARKERS ? 3 : 2;
+        drawBars(c);  // under the guides and markers
         if (state != pendingState) {
             pendingState = state;
             pendingSince = now;

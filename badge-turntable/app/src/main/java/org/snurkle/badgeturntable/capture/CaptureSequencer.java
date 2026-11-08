@@ -8,6 +8,7 @@ import androidx.exifinterface.media.ExifInterface;
 
 import org.snurkle.badgeturntable.camera.CameraController;
 import org.snurkle.badgeturntable.media.AngleLog;
+import org.snurkle.badgeturntable.media.SideBars;
 import org.snurkle.badgeturntable.media.SpinTranscoder;
 import org.snurkle.badgeturntable.media.WebImages;
 import org.snurkle.badgeturntable.motion.Calibration;
@@ -113,6 +114,11 @@ public final class CaptureSequencer {
     private final CameraController camera;
     private final RingDetector ring;
     private final TurntableController table;  // null when the profile has no remote
+    /**
+     * The side bars for the capture running, taken when it starts so every view and the spin
+     * match. NONE otherwise: extra shots don't get them (they may be reframed or hand-held).
+     */
+    private volatile SideBars bars = SideBars.NONE;
 
     public CaptureSequencer(Context context, CameraController camera, RingDetector ring, TurntableController table) {
         this.context = context.getApplicationContext();
@@ -134,6 +140,7 @@ public final class CaptureSequencer {
     /** @return true if every view asked for (and the spin, if asked for) was captured */
     public boolean capture(CaptureTarget t, Options o, Listener l) throws Exception {
         boolean drive = o.auto && table != null;
+        bars = camera.settings().bars();
         try {
             boolean complete;
             if (!o.stills) {
@@ -168,6 +175,7 @@ public final class CaptureSequencer {
             }
             throw e;
         } finally {
+            bars = SideBars.NONE;
             camera.unlock3A();
         }
     }
@@ -505,7 +513,7 @@ public final class CaptureSequencer {
         File web = t.webFile(filename);
         mkdirs(web.getParentFile());
         try {
-            WebImages.writeWebCopy(original, web);
+            WebImages.writeWebCopy(original, web, bars);
         } finally {
             //noinspection ResultOfMethodCallIgnored
             original.delete();
@@ -590,7 +598,7 @@ public final class CaptureSequencer {
         t.encoding(m);
         l.onStatus("Encoding the spin video…");
         try {
-            SpinTranscoder.transcode(context, source, web, startUs, endUs);
+            SpinTranscoder.transcode(context, source, web, startUs, endUs, bars);
             t.add(m);
         } finally {
             //noinspection ResultOfMethodCallIgnored

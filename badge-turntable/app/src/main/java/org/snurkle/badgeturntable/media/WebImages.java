@@ -14,7 +14,8 @@ import java.io.OutputStream;
 /**
  * The web copy that goes in the badge folder: 2400 px on the long edge, JPEG
  * quality 85, upright (EXIF rotation applied), aiming for under 1 MB as the
- * repo README asks. The full-resolution original stays in _capture/.
+ * repo README asks, with the {@link SideBars} painted in if they're on. The full-size
+ * original is deleted afterwards (only web copies are kept), so the bars can't be undone.
  */
 public final class WebImages {
     public static final int LONG_EDGE = 2400;
@@ -23,6 +24,11 @@ public final class WebImages {
     private WebImages() {}
 
     public static void writeWebCopy(File original, File dest) throws IOException {
+        writeWebCopy(original, dest, SideBars.NONE);
+    }
+
+    /** As above, with the side bars painted over the upright picture. */
+    public static void writeWebCopy(File original, File dest, SideBars bars) throws IOException {
         BitmapFactory.Options bounds = new BitmapFactory.Options();
         bounds.inJustDecodeBounds = true;
         BitmapFactory.decodeFile(original.getPath(), bounds);
@@ -43,6 +49,18 @@ public final class WebImages {
         if (rotation != 0) m.postRotate(rotation);
         Bitmap out = Bitmap.createBitmap(bmp, 0, 0, bmp.getWidth(), bmp.getHeight(), m, true);
         if (out != bmp) bmp.recycle();
+        if (bars.active()) {
+            if (!out.isMutable()) {
+                Bitmap copy = out.copy(Bitmap.Config.ARGB_8888, true);
+                out.recycle();
+                out = copy;
+            }
+            int w = out.getWidth(), h = out.getHeight();
+            int[] px = new int[w * h];
+            out.getPixels(px, 0, w, 0, 0, w, h);
+            bars.apply(px, w, h);
+            out.setPixels(px, 0, w, 0, 0, w, h);
+        }
 
         File parent = dest.getParentFile();
         if (parent != null && !parent.isDirectory() && !parent.mkdirs()) throw new IOException("can't create " + parent);
