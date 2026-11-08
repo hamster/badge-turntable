@@ -62,7 +62,7 @@ Typing on a phone clamped in a tripod is awkward, so the app can also be driven 
 
 1. **Sessions (home).** A list of the sessions on the phone, newest first, each with a thumbnail (the front photo), the name and the file count. Actions: **New session**, **Camera** (the Capture screen without a session), tap a session to open it, long-press for **Delete**.
 2. **Session.** The name, the notes, the session options and a strip of the captured photos and videos, which can be viewed and deleted. **Save**, and **Open camera**, which saves and opens the Capture screen with this session open, without starting a capture. See [Sessions](#sessions).
-3. **Capture** (called **Camera** when opened without a session). A full-screen live preview with camera controls, the turntable status, the **Capture** and **Extra shot** buttons, and the auto/manual toggle. Everything happens here, including calibration. A button at the top of the right-hand column shows the [capture target](#the-open-session): "Badge: Mk9", "Shots for the editor" or "No badge open". Tapping it opens the session picker. While a job runs, **Extra shot** becomes **Stop**, and in manual mode **Capture** becomes **Ready**.
+3. **Capture** (called **Camera** when opened without a session). A full-screen live preview with camera controls, the turntable status, the **Capture** and **Extra shot** buttons, and the **Moving shots** and **Auto table** switches (see [Two ways to capture](#two-ways-to-capture)). Everything happens here, including calibration. A button at the top of the right-hand column shows the [capture target](#the-open-session): "Badge: Mk9", "Shots for the editor" or "No badge open". Tapping it opens the session picker. While a job runs, **Extra shot** becomes **Stop**. By hand, **Capture** takes each view, then becomes **Record spin** (with **Skip video** beside it) and, while recording, **Stop** (with **Discard**).
 4. **Settings.** Remote control and paired PCs, turntable/IR, capture defaults, calibration status and the capabilities probe.
 
 Every screen is landscape only, either way round (`sensorLandscape`), to suit the phone lying sideways in the tripod. Turning it end over end doesn't restart the Capture screen, so the app updates the camera's target rotation itself, keeping stills, video and the ring frames upright.
@@ -80,15 +80,16 @@ When remote control is on, the app opens straight on the Camera screen (Back goe
 
 ## Camera preview and controls
 
-The preview shows the light box: the whole 4:3 frame, as the stills are, in the middle of the landscape screen. The remote-control address and pairing code sit centred across the top (clear of Android's camera-in-use indicator), the ring reading is two fixed lines at the top of the left column with **Set front** below it, a line across the bottom shows what's happening, and the buttons sit in the columns either side, so nothing covers the picture or the ring.
+The preview shows the light box: the whole 4:3 frame, as the stills are, in the middle of the landscape screen. The remote-control address and pairing code sit centred across the top (clear of Android's camera-in-use indicator), the ring reading is three fixed lines at the top of the left column (the angle, the tags read, and the table's angle from the front, or "No front set") with **Set front** below it, a line across the bottom shows what's happening, and the buttons sit in the columns either side, so nothing covers the picture or the ring.
 
 - **Lens:** a **Lens** button cycles through the back cameras CameraX can bind. It's hidden when there's only one (the OnePlus 9 Pro offers only its logical camera, which picks a lens as it zooms; the OnePlus 13 lists each lens).
 - **Zoom:** pinch, or **−** and **+** (×1.25 a press). The readout between them shows the zoom; tap it to go back to 1×.
 - **Focus:** tap to focus at a point for a few seconds, then continuous AF returns (focus only: metering exposure too made the picture jump, and holding focus on a tap at the background left the ring blurred). Captures lock focus on the centre themselves. The editor adds a focus lock and manual focus distance when the device reports `MANUAL_SENSOR`, and its click on the preview holds focus on that point until it's cleared.
 - **Exposure:** auto with EV compensation (**EV −** and **EV +**), or manual ISO and shutter speed from the editor when supported. Exposure lock.
 - **White balance:** auto and presets (daylight, cloudy, incandescent, fluorescent), and a lock from the editor. Manual Kelvin isn't done yet.
-- **Guides** (a switch, remembered): a rule-of-thirds grid, a dashed centre line, and the **ring zone**, a box low in the frame where the ring should sit. It turns green when 8 or more markers are read, all inside the box, and amber with fewer or with markers outside it. The state only changes once it has held for 0.6 s, because the count varies from frame to frame.
+- **Guides** (the grid button in the preview's top right corner, remembered; dim when they're off): a rule-of-thirds grid, a dashed centre line, and the **ring zone**, a box low in the frame where the ring should sit. It turns green when 8 or more markers are read, all inside the box, and amber with fewer or with markers outside it. The state only changes once it has held for 0.6 s, because the count varies from frame to frame.
 - **Side bars** (a switch under **Set front**): for badges narrower than the light box, so its edges don't show. When on, a bar on each side of the preview shades what's past it. Drag a bar by its line (the white grip marks it) to move it. Turning the bars on with no positions set puts each at 8% of the width. What's past the bars is painted over in the views and the spin (see [Side bars](#side-bars)). The bars are part of the light box profile, so they stay set from badge to badge, and the editor sees and changes them too. Turning them off keeps the positions for next time. They can't be changed while a job runs.
+- **At the front:** within 2.5° of the front (the same tolerance a capture uses to decide it's there), the third line reads "At the front ✓" in green. Within 30°, the preview also shows it at its top left, for turning the table there by hand while watching the picture: amber "Front +6.3°", then green "At the front".
 - **Always shown:** a small box on each marker being read, and the turntable axis the ring fit found. The axis turns green ("Axis centred") within 2% of the centre line, which means the camera is centred on the table.
 
 The light box doesn't change between badges, so all camera settings are saved as a **light box profile** and restored on launch. During a capture sequence, AF, AE and AWB are locked from the moment **Capture** is pressed, so all four stills and the video match.
@@ -119,7 +120,7 @@ The app ships with a profile for your turntable, but any turntable can be set up
 - **Custom:** the user picks a **control type**, then sets up the buttons:
   - *Continuous only:* `start/stop` is required. `direction` and `speed+/-` are optional.
   - *Continuous + positions:* everything in continuous only, plus step buttons, where the user enters the angle each one moves (for example 45°, 90°, 180°). Optional `set origin` and `return to origin` roles cover tables with homing, like the JAYEGT.
-  - *No remote:* auto mode is turned off and only manual mode is available. The encoder ring still drives the manual-mode angle dial.
+  - *No remote:* **Auto table** is off, so the user starts and stops the table for moving shots, or captures by hand. The encoder ring still drives the by-hand angle dial.
 - **None (manual only):** a shortcut for a turntable with no remote.
 
 **Getting codes for a Custom profile.** Android's IR API can only transmit, and phones with IR blasters, the OnePlus 13 included, have no IR receiver. So the blaster can't learn codes. The app offers these sources instead:
@@ -170,7 +171,7 @@ Calibration learns how the table moves and where zero is. Steps:
 - the ring can be read, and
 - the last few moves landed within tolerance (see Positioning).
 
-If any check fails, the user is prompted to calibrate before an auto capture can run. Manual mode doesn't need calibration.
+If any check fails, the user is prompted to calibrate before moving shots with **Auto table** can run. Without **Auto table**, and by hand, no calibration is needed.
 
 ### Positioning
 
@@ -200,6 +201,7 @@ Opening a session from the Sessions list shows its name and notes, editable, and
 - **Tap** a thumbnail to view it full screen in the phone's photo or video viewer.
 - **Long-press** a thumbnail for **Delete**. After a confirmation, the file and its thumbnail are removed. Deleting the front photo makes the first other photo the card thumbnail. A file can't be deleted while a capture is writing into the session.
 - **Save** writes the name, notes and options to `session.json` and returns to the list. It doesn't touch the media list, so a capture running meanwhile isn't undone. **Open camera** saves, then opens the Capture screen with this session open (flow 2). It doesn't start a capture.
+- **Delete session**, at the bottom left (not shown for a new session), deletes the whole session after a confirmation, the same as a long-press on the Sessions list: refused while a capture writes into it, and if it's the open session, it's closed first. The screen then closes.
 - The strip updates as files are captured or deleted (from a capture, or the editor) while the screen is open. If the session itself is deleted, the screen closes with a note.
 
 Appending works from the Capture screen with the session open:
@@ -225,78 +227,54 @@ The phone doesn't set a `badge_id`. The editor suggests one from the repo it has
 
 ## Capture sequence
 
-### Spin capture (default)
+### Two ways to capture
 
-**Settings → Capture → Capture method** picks *Spin* (the default) or *Stop at each view* (the auto and manual modes below).
+The **Moving shots** switch on the Capture screen (remembered) picks how a set is captured:
+
+- **Moving shots** (on, the default): the table turns continuously and the stills are taken as the ring passes each view. It needs the encoder ring in view. With IR and **Auto table** on, the app starts the table, sets its speed and stops it; otherwise the user starts it by hand.
+- **By hand** (off): the app asks for each view in turn, and the user turns the table, or the badge itself, and presses **Capture**. It needs no ring, no IR and no turntable at all.
+
+Stopping at each view with IR (turn 90°, settle, shoot) was dropped (Nov 8, 2026): the moving shots came out sharp, and by hand covers setups without the ring. Phones set to the old **Capture method** "Stop at each view" start with **Moving shots** off.
+
+If **Moving shots** is on but the ring can't be read when **Capture** is pressed, the app offers **Capture by hand** instead. With **Auto table** on and no calibration, it offers **Calibrate**, or starting the table by hand.
+
+Recorded angles (`nominalDeg`/`actualDeg` in the API, `angleNominal`/`angleActual` in `session.json`) are measured from the front, so the front is about 0 and the 90° view about 90. By hand, they're recorded only when the ring can be read.
+
+### Moving shots
 
 - **Photo spin:** the table turns continuously, slowly (**Spin speed for photos**, default 30 s per turn). The front is the one set with **Set front**, or else wherever the badge faces when **Capture** is pressed, and the other views follow in the direction the table turns. Each still is triggered as the ring comes up to its angle, allowing for the measured shutter lag (about 165–195 ms on the test phones). Its actual angle is interpolated from the ring readings at the exposure's sensor timestamp, which is on the same clock. Stills use `CAPTURE_MODE_MINIMIZE_LATENCY`, because maximum quality can merge frames and ghost a moving badge.
+- **Already turning:** a capture can start with the table already turning (started by hand, or left running). It carries on from there instead of waiting for the table to stop. With IR it still presses **Turn right** to make sure the table is turning continuously one way, and then sets the speed. If the remote has only **Start/Stop**, it presses nothing, because that toggle would stop the table.
 - **Exposure:** the shutter is limited by a blur budget of 0.05 mm at 60 mm from the axis, which is 1/250 s at 30 s per turn. If auto exposure is already that fast, or the light box profile sets exposure by hand, it's left alone. Otherwise the shutter is shortened and ISO raised to match, at most ISO 1600.
-- **Video spin:** the table speeds up (**Spin speed for the video**, default 15 s per turn), and the clip records 360° plus the overlap while it keeps turning. The table stops before encoding starts.
+- **Video spin:** the table speeds up (**Spin speed for the video**, default 15 s per turn), and the clip records 360° plus the overlap while it keeps turning. The table stops before encoding starts. A spin-only capture with IR starts the table at the video speed and records a turn.
 - **Speed control:** with IR, the app presses +Speed or −Speed and checks each press on the ring, up to four presses, until it's within 20% of the target. Whether the JAYEGT's speed buttons stop or wrap at the ends hasn't been measured yet.
-- **Without IR** (a phone with no blaster): the status line asks the user to start the table, and the app waits up to 2 minutes for steady rotation, then says when to stop it. It can't change speed, so set the table to its slowest speed.
+- **Without IR** (a phone with no blaster, or **Auto table** off): the status line asks the user to start the table, and the app waits up to 2 minutes for steady rotation, then says when to stop it. It can't change speed, so set the table to its slowest speed.
+- **Afterwards,** with IR, the table goes back to the front (closed-loop, by the ring) so the next badge can be placed.
 - **Failures:** if the table stops or reverses mid-spin, the move-failed prompt offers **Retry** or **Stop**. A reversal usually means intermittent or swing mode: press Resume Continuous Rotation.
+- **Turning or lost:** when a move needs the table at rest (going back to the front, calibration) and it doesn't settle, the message says the table is still turning if the ring is read fine. Only an unreadable ring gives "Can't see the encoder ring" (prompt `reason` `turning` or `ring_lost`).
 - **Tested:** on the OnePlus 9 Pro at 8 s per turn, the stills landed within 2.1° of their angles, sharp enough to use.
 
-Recorded angles (`nominalDeg`/`actualDeg` in the API, `angleNominal`/`angleActual` in `session.json`) are measured from the front, so the front is about 0 and the 90° view about 90, in either capture method.
+### By hand
+
+1. **Prechecks:** enough free storage (500 MB or more). No calibration or ring is needed.
+2. **Lock** AF, AE and AWB using the current preview settings.
+3. **The four views,** in order: front, Side (90°), Back, Side (270°). For each, the status line says what to do ("Turn the badge to face the camera, then press Capture", "Turn the badge to Side (90°)…"), and **Capture** takes it after a short countdown (default 2 s, **Settings → Capture**), so touching the phone doesn't shake the shot. If the ring can be read and a front is set, the editor's dial shows the angle against the target, and each still records its measured angle. **Stop** (the button that's **Extra shot** when idle) ends the capture, keeping the views taken.
+4. **The spin** (if the session's video option is on): "Press Record spin to record the spin video, or Skip video". **Record spin** starts recording. The user turns the table, or the badge, once round, and presses **Stop** to keep the clip (**Discard** throws it away). With the ring, the clip is cut to exactly one turn; without it, the whole clip is kept, up to 30 s (see [Seamless spin loop](#seamless-spin-loop)). With a turntable, starting its motor before pressing **Record spin** gives the smoothest loop.
+5. **Write** the files (see [Output](#output)). The table isn't moved: by hand, the app never drives it.
+
+The screen stays on during a capture. If the app goes to the background, the capture aborts cleanly and keeps the views already taken.
 
 ### Seamless spin loop
 
-The spin video plays on a loop on the badge page, so the last frame has to lead straight back into the first, with no jump in angle or speed. Every way of recording the spin (photo spin, auto, by hand, with or without the ring) follows the same rules:
+The spin video plays on a loop on the badge page, so the last frame has to lead straight back into the first, with no jump in angle or speed. Every way of recording the spin follows the same rules:
 
-1. **Steady speed before recording.** Recording starts only once the table is turning steadily, so the start-up isn't in the clip. With the ring: the speed over the last second is within 5% of the speed over the last 3 seconds. Wait up to 10 s, then record anyway and say the loop may not be clean. Without the ring: the user says it's turning steadily (**Ready**).
-2. **Record a little more than one turn:** a short lead-in (0.5 s), then 360°, then the overlap (default 15°, about 0.6 s at 15 s per turn). With the ring, the app stops by itself once that much has turned. Without it, the user presses **Done** once the table has gone a little past where it started.
+1. **Steady speed before recording.** With moving shots, recording starts only once the table is turning steadily, so the start-up isn't in the clip: the speed over the last second is within 5% of the speed over the last 3 seconds. Wait up to 10 s, then record anyway and say the loop may not be clean. By hand, the user starts the motion and presses **Record spin** once it's steady.
+2. **Record a little more than one turn:** a short lead-in (0.5 s), then 360°, then the overlap (default 15°, about 0.6 s at 15 s per turn). With moving shots, the app stops by itself once that much has turned. By hand, the user presses **Stop** once the table has gone a little past where it started.
 3. **Cut exactly one revolution.** The start is the first ring reading after the lead-in. The end is the moment the angle reaches the start plus 360°, interpolated between readings. The transcoder takes `[start, end)` and nothing outside it. At 15 s per turn and 30 fps, a frame is 0.7°, so the worst mismatch at the splice is about 0.4°, which can't be seen.
 4. **Check the speed.** If the speed across the cut varies by more than 10% (someone touched the table, or it stuttered), the job still succeeds, but the app and the editor say the loop may show a jump.
-5. **Without the ring, match frames.** While recording, keep a 64×48 greyscale thumbnail of each analysis frame with its timestamp. The reference is the frame at the end of the lead-in. The end is the later frame, at least 75% of the way through the recording, with the smallest mean absolute difference from the reference. If even that difference is large (the badge moved, or less than a turn was recorded), keep the whole clip, capped at 30 s, and say it won't loop cleanly.
+5. **Without the ring, match frames** (not done yet: the whole clip is kept, up to 30 s). While recording, keep a 64×48 greyscale thumbnail of each analysis frame with its timestamp. The reference is the frame at the end of the lead-in. The end is the later frame, at least 75% of the way through the recording, with the smallest mean absolute difference from the reference. If even that difference is large (the badge moved, or less than a turn was recorded), keep the whole clip, capped at 30 s, and say it won't loop cleanly.
 6. **No crossfade** for now. The cut is accurate enough, and the light box lighting is constant. If a jump still shows, the overlap past 360° already holds the frames for a short crossfade (4–6 frames) at the splice.
 
-Turning the table by hand never gives a steady speed, so manual mode asks the user to start the table's own motor with its remote. The phone's own spin capture already waits for steady rotation before recording (see **Without IR** above).
-
-### Auto mode (stop at each view)
-
-```mermaid
-stateDiagram-v2
-    [*] --> Prechecks
-    Prechecks --> Calibrate: not calibrated
-    Calibrate --> Prechecks
-    Prechecks --> LockCamera: all good
-    LockCamera --> Still0
-    Still0 --> Move: next angle
-    Move --> Still: within tolerance
-    Move --> MoveFailed: no movement / ring lost
-    Still --> Move: more views
-    Still --> Video: 4 views done, video on
-    Still --> Write: 4 views done, video off
-    Video --> Write
-    Write --> Home
-    Home --> [*]
-    MoveFailed --> Move: retry
-    MoveFailed --> Manual: switch to manual for remaining views
-    MoveFailed --> Write: stop, keep what was captured
-```
-
-1. **Prechecks**
-   - Calibration is valid. If not, the app prompts to calibrate.
-   - There is enough free storage (500 MB or more).
-2. **Lock** AF, AE and AWB using the current preview settings.
-3. **0° (front).** 0° is the **front**: the ring angle stored with **Set front** on the Capture screen (or from the editor). If the table is more than 2° from it, the app turns there first; in manual mode it asks the user to. With no front set, 0° is the table's angle at the moment **Capture** is pressed, because that's how the user framed the badge. All other angles are relative to it, so a slightly bumped table doesn't matter. With a calibration, Set front also makes the front the zero and presses Set Origin there, so homing returns to it and the next badge goes on facing the camera.
-4. **90°, 180°, 270°.** For each: move, wait for the angle to settle (stable for 300 ms), then capture. If the table doesn't move, the sequence stops and shows "Can't move the turntable" with **Retry**, **Switch to manual** (for the remaining views) or **Stop** (keep the views already captured).
-5. **Spin video** (if `captureVideo` is on):
-   - Start recording with the same locks, send continuous rotation, and log the angle against the frame timestamp.
-   - On the JAYEGT, use 15 s per revolution. At 8 s the rim moves about 57 mm/s and smears the ring. At 30 s the clip would need speeding up to fit the 30 s limit.
-   - Stop after 360° plus an overlap (default 15°), then stop the table.
-   - Afterwards, **trim the clip to exactly one revolution**, from the frame at the start angle to the frame back at the start angle, so it loops seamlessly on the site (see [Seamless spin loop](#seamless-spin-loop)). This also solves the looping item in [TODO.md](https://github.com/hamster/badges/blob/main/TODO.md).
-6. **Write** the badge folder (see [Output](#output)) and **home** the table back to 0° so the next badge can be placed.
-
-The screen stays on during a sequence. If the app goes to the background, the sequence aborts cleanly and keeps the views already captured.
-
-### Manual mode
-
-Manual mode is turned on by unticking **Auto table** on the Capture screen (or **Automatic turntable** in the badge's options). From the editor, it's the by-hand capture buttons. It's used when IR or the ring isn't available, or for odd setups.
-
-- For each view, the app tells the user what to do, for example "Turn the table to 90° (badge side facing camera)". If the ring can be read, it also shows a dial with the current angle against the target, which turns green within tolerance.
-- **Capture** starts a short countdown (default 2 s, configurable) so the table and phone can stop moving after being touched. If the ring is visible, the app also waits for the angle to be stable before taking the shot.
-- **Video in manual mode:** the app asks the user to start the table turning with its remote (continuous rotation) and tap **Ready** once it's turning steadily. Recording starts then, not before, so the start-up isn't in the clip. If the ring is visible, recording stops by itself after the lead-in, 360° and the overlap. Otherwise the app asks the user to tap **Done** once the table has gone a little more than once round. Then it says the table can be stopped. See [Seamless spin loop](#seamless-spin-loop).
+Turning a badge by hand never gives a steady speed, so a by-hand spin won't loop perfectly. On a turntable, start its own motor first.
 
 ### Extra shots
 
@@ -437,7 +415,7 @@ The API runs a camera and an IR blaster, so it's not open to anyone on the netwo
 - **When the server runs:** while the app is in the foreground, on any screen, and **Settings → Remote control** is on. It starts when the app comes to the foreground and stops when it goes to the background (the process lifecycle, not one screen's), closing WebSockets with 1001, so the editor shows the phone as disconnected. Moving between the app's own screens doesn't drop the editor. A banner on every screen shows the name, address and pairing code, and "Controlled from &lt;PC name&gt;". Local controls still work.
 - **What needs the Camera screen:** the camera, the ring and the preview exist only while the Capture screen is open. Until then, camera settings, focus, Set front, moves, calibration and captures answer `503 camera_unavailable` ("Open the Camera screen on the phone"), status reports `cameraOpen: false`, and the WebSocket sends no ring readings or preview frames. Pairing, status, IR button presses, sessions, held shots and the capture target work from any screen. The editor can ask the phone to open its Capture screen (`POST /api/camera/open`); the app is in the foreground, so it's allowed to, and the call returns once the camera is running (or `503` after 10 s, for example while the phone asks for camera access). Leaving the Capture screen stops any job still running, keeping what it captured.
 - **One job at a time.** Calibration, a capture, an extra shot or a move is a job, whether the phone or the editor started it. A command that needs the camera or turntable while a job runs gets `409 busy`. **Stop** on either side aborts the job; on the phone it answers a prompt's Stop if one is showing.
-- **Prompts.** A move failure (**Retry**, **Switch to manual** or **Stop**) is a dialog on the phone and a prompt in the editor. A manual-mode instruction ("Turn the table to 90°", or for the spin, "Start the table turning with its remote…") shows in the status line, answered with **Ready**. A spin by hand without the ring also asks for **Done** once the table has gone a little more than once round. The first answer wins, and the phone closes its dialog when the editor answers first.
+- **Prompts.** A move failure (**Retry** or **Stop**) is a dialog on the phone and a prompt in the editor. A by-hand instruction ("Turn the badge to Side (90°), then press Capture", "Press Record spin…", "Recording: … press Stop") shows in the status line, answered with the big button, which is labelled to match. The first answer wins, and the phone closes its dialog when the editor answers first.
 - **Shots.** The editor's unnamed set: no name or notes, just files with the standard names (`front.jpg`, `lanyard.jpg`, …), and the editor decides where they go. Like sessions, only the web copies are kept. They're kept (in `files/remote/`, indexed by `shots.json`) until the editor deletes them. Every capture, from either side, goes into the [capture target](#the-open-session): a session or these shots.
 - **Not done yet:** Kelvin white balance (reported as unsupported), and backward moves (`by` below 0 is refused with `422`).
 
@@ -485,7 +463,7 @@ A **Turntable** panel in `/edit/` (its own script and styles, [edit/turntable.js
 - **Phones:** **Find phones** probes `badge-turntable.local`, remembered phones and added addresses. **Add by address**, **Pair…** (type the code shown on the phone), **Connect**, **Disconnect** and **Forget**. The last phone used reconnects when the panel opens. If the browser hasn't been given local network access yet, the first probe waits for a click on **Find phones**, so the permission prompt appears.
 - **Preview:** the live JPEG frames, with the ring overlay (axis and markers), an optional thirds grid, and the table and ring angle readout. Click to focus on a spot (focus only, not exposure): it stays there, marked with a ring, until **Back to auto**, and a capture replaces it with its own centre focus, so it's mainly for extra shots of a detail. Under the preview: lens (if there's more than one), zoom, **Brightness** (exposure compensation; exposure stays automatic) and a focus line saying what focus is doing. **More camera settings** folds away manual exposure (ISO and shutter), manual focus distance, white balance (presets or Kelvin) and **Hold** boxes for exposure, focus and white balance (the AE, AF and AWB locks). All are built from the phone's capabilities and locked while a sequence runs.
 - **Turntable:** the calibration summary and where the front is set, **Calibrate**, **Step 90°** (a checked move once calibrated, otherwise the raw step button), **Home**, **Set front**, **Go to** an angle, and a Test button for each role. The readout under the preview shows how far the table is from the front.
-- **Capture:** a choice of **Main views** or **Extra set:** with a label, then four buttons. **Auto capture** (shown only when the phone has IR for the table, and enabled once it's calibrated) has the phone turn the table for the four stills and then record the spin. **Capture both** does the same by hand, and **Capture stills** and **Capture spin** do one part each by hand. By hand, the phone says what to do with the table, and that depends on its **Capture method**: with **Spin** (the default), start the table turning and stop it when told, and the stills are taken as it passes each angle; with **Stop at each view**, a prompt asks for each view. For a spin on its own, a prompt asks the user to start the table's motor, then says when it can stop (see [Seamless spin loop](#seamless-spin-loop)). A line under the buttons says which applies. Then **Extra shot** with the same label chips as the phone, **Stop**, and a progress line. If the phone drops out of contact mid-job (no message for 4 s), the panel says so and disables the controls, and the job carries on on the phone, where **Stop** still works. **Stop** in the editor is held and sent when the phone is back, if the same job is still running. The countdown shows over the preview. Prompts appear as a dialog that leaves the preview usable, with a dial of the table's angle against the target in manual mode.
+- **Capture:** a choice of **Main views** or **Extra set:** with a label, the **Moving shots** choice (defaulting to the phone's switch; with IR, **Auto table** too), and **Capture both**, **Capture stills** and **Capture spin** (`moving`, `auto`, `stills` and `video` in [`POST /api/capture`](Remote-API.md#post-apicapture)). With moving shots and IR, the phone turns the table; without IR, the phone says when to start and stop it. By hand, a prompt asks for each view, then whether to record the spin, then for **Stop** when it's gone round. Then **Extra shot** with the same label chips as the phone, **Stop**, and a progress line. If the phone drops out of contact mid-job (no message for 4 s), the panel says so and disables the controls, and the job carries on on the phone, where **Stop** still works. **Stop** in the editor is held and sent when the phone is back, if the same job is still running. The countdown shows over the preview. Prompts appear as a dialog that leaves the preview usable, with a dial of the table's angle against the target in manual mode.
 - **Camera on the phone:** while the phone isn't on its Camera screen, the preview area says so, with **Open camera on phone**.
 - **Target:** a line saying where captures go ("Into Mk9 on the phone", "New set of shots"). When the phone has a session open that the editor hasn't joined, a prompt asks **Join Mk9** or **Start a new set** before the first capture.
 - **Phone sessions:** the sessions captured on the phone, with thumbnail, name, date and file count, updated live. Each has **Open as new badge**, **Add to this badge** and **Delete from phone**; opening one shows its files, each of which can be deleted from the phone. See [Sessions from the phone](#sessions-from-the-phone).

@@ -17,6 +17,7 @@
     <string name="delete_session_title">Delete %1$s?</string>
     <string name="delete_session_message">Its photos and videos are removed from the phone.</string>
     <string name="delete_session_busy">%1$s is being captured into. Stop the capture first.</string>
+    <string name="delete_session">Delete session</string>
 
     <!-- Session -->
     <string name="field_title">Badge name</string>
@@ -63,9 +64,9 @@
     <string name="ring_angle">Ring %1$5.1f°</string>
     <string name="ring_not_visible">Ring not seen</string>
     <string name="ring_tags">%1$2d tags</string>
-    <string name="front_offset">front %1$+.1f°</string>
-    <string name="at_front">at the front</string>
-    <string name="front_not_set">no front set</string>
+    <string name="front_offset">Front %1$+.1f°</string>
+    <string name="at_front">At the front ✓</string>
+    <string name="front_not_set">No front set</string>
     <string name="set_front">Set front</string>
     <string name="front_set">Front set at %1$.1f°. Captures start here.</string>
     <string name="zoom_in">Zoom in</string>
@@ -77,8 +78,16 @@
     <string name="lens_label">Lens: %1$s</string>
     <string name="camera_permission_needed">The camera permission is needed to capture badges.</string>
     <string name="calibrate_first_title">Calibrate first?</string>
-    <string name="calibrate_first_message">The turntable hasn\'t been calibrated, the profile changed, or the encoder ring can\'t be seen. Calibrate now, or capture in manual mode.</string>
-    <string name="use_manual">Use manual</string>
+    <string name="calibrate_first_message">The turntable hasn\'t been calibrated, or the profile changed. Calibrate now, or start the table by hand.</string>
+    <string name="use_manual">Start it by hand</string>
+    <string name="no_ring_title">Can\'t see the tags</string>
+    <string name="no_ring_message">Moving shots need the encoder ring in view. Capture by hand instead? You\'ll be asked to turn the badge to each view, and press Capture for each.</string>
+    <string name="capture_by_hand">Capture by hand</string>
+    <string name="moving_shots">Moving shots</string>
+    <string name="record_spin">Record spin</string>
+    <string name="stop_recording">Stop</string>
+    <string name="skip_video">Skip video</string>
+    <string name="discard_video">Discard</string>
     <string name="extra_other">Other…</string>
     <string name="extra_set">Extra turntable set…</string>
     <string name="extra_label_hint">Label, e.g. SAO close-up</string>
@@ -92,7 +101,6 @@
     <string name="ready">Ready</string>
     <string name="setup_mode">Press Capture to pick a badge.</string>
     <string name="remote_banner">%1$s.local · %2$s · code %3$s</string>
-    <string name="guides">Guides</string>
     <string name="side_bars">Side bars</string>
     <string name="remote_no_wifi">no Wi-Fi address</string>
     <string name="remote_controlled_from">%1$s connected</string>
@@ -118,7 +126,6 @@
     <string name="calibration">Calibration</string>
     <string name="not_calibrated">Not calibrated</string>
     <string name="calibrated_summary">%1$.1f°/s, overshoot %2$.1f°, %3$s. Tap to clear.</string>
-    <string name="capture_method">Capture method</string>
     <string name="spin_photo_speed">Spin speed for photos</string>
     <string name="spin_video_speed">Spin speed for the video</string>
     <string name="manual_delay">Manual capture delay</string>

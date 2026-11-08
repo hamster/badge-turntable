@@ -286,22 +286,23 @@ Body: `{}`. Runs `Calibrator` as a job of kind `calibrate`. Progress text comes 
 ### `POST /api/capture`
 
 ```json
-{ "stills": true, "video": true, "auto": true, "setLabel": null }
+{ "stills": true, "video": true, "moving": true, "auto": true, "setLabel": null }
 ```
 
 - `stills`: take the four views. Default `true`.
 - `video`: record the spin. Default `true`. At least one of `stills` and `video` must be `true`, or `400 bad_request` with `field: "stills"`.
-- `auto`: `true` moves the table and checks each angle. `false` is manual mode: a `position` prompt for each view (and for the spin), answered when the user has turned the table. Default `true`.
+- `moving`: `true` for [moving shots](Spec.md#moving-shots) (the table turns and the stills are taken as the ring passes each view; needs the ring), `false` for [by hand](Spec.md#by-hand) (a `position` prompt for each view; no ring, IR or turntable needed). Missing: the phone's **Moving shots** switch, the same as a capture started on the phone.
+- `auto`: moving shots only: `true` has the phone start the table, set its speed, stop it and return it to the front with IR; `false` leaves starting and stopping it to the user. Ignored by hand. Default `true`. `422 unsupported` with `field: "auto"` when the phone can't drive the table.
 - `setLabel`: `null` (or missing, or empty) for the main turntable set, or a label such as `"With SAOs installed"` for an [extra set](Spec.md#extra-shots).
 
-Prechecks, in order: `503 camera_unavailable`, `409 busy`, `409 not_calibrated` (auto only), `507 storage_low`. Then `202 {job}` with kind `capture`. The sequence follows the phone's **Settings → Capture → Capture method**, the same as a capture started on the phone, except **Write** keeps the files as remote [shots](#shots) instead of writing a badge folder:
+Prechecks, in order: `503 camera_unavailable`, `409 busy`, `409 not_calibrated` (moving shots with `auto` only), `507 storage_low`. Then `202 {job}` with kind `capture`, whose `params` show the `moving` and `auto` actually used. **Write** keeps the files as remote [shots](#shots) (or in the joined session) instead of writing a badge folder.
 
-- **Spin** (the default; see [Spin capture](Spec.md#spin-capture-default)): the table turns continuously and the stills are taken as the ring passes each angle, then the spin is recorded. It needs the ring. With `auto: false` there are no `position` prompts: `progress.text` asks the user to start the table ("Start the turntable (slowest speed is sharpest)"), the phone waits up to 2 minutes for steady rotation, and then it says when the table can be stopped.
-- **Stop at each view** ([Auto mode](Spec.md#auto-mode-stop-at-each-view) and [Manual mode](Spec.md#manual-mode)): the table stops for each still. With `auto: false`, a `position` prompt asks for each view.
+- **Moving shots:** the table turns continuously and the stills are taken as the ring passes each angle, then the spin is recorded. With `auto: false` there are no prompts: `progress.text` asks the user to start the table ("Start the turntable (slowest speed is sharpest)"), the phone waits up to 2 minutes for steady rotation, and then it says when the table can be stopped. A ring that can't be read fails the job with `ring_lost`.
+- **By hand:** a `position` prompt for each view (`answers` `ready`, `stop`; `ready` takes it after the countdown). Then, if `video`, a `position` prompt with `view: "spin"` and `stage: "start"` (`answers` `ready` to record, `skip` to skip the video), and once recording, another with `stage: "recording"` (`ready` keeps the clip, `stop` discards it). The table is never driven.
 
-A spin-only capture (`stills: false`) is the same with either method. The table is homed at the end only when the phone drove it (`auto: true`).
+With `stills: false`: by hand, it's the two spin prompts; with moving shots and `auto`, the phone starts the table at the video speed, records a turn and stops it. `progress.of` counts only the steps asked for: 4 views if `stills`, 1 spin if `video`, and 1 for going back to the front ("Returning to zero…") with moving shots and `auto`.
 
-The editor sends four combinations, one per button: **Auto capture** `{stills: true, video: true, auto: true}`, and three by hand: **Capture both** `{stills: true, video: true, auto: false}` (the four stills, then the spin), **Capture stills** `{stills: true, video: false, auto: false}`, and **Capture spin** `{stills: false, video: true, auto: false}`. The other combinations are valid too. With `stills: false` the job is: turn to the front (if one is set), record the spin, and home if `auto`. `progress.of` counts only the steps asked for: 4 views if `stills`, 1 spin if `video`, and 1 for homing ("Returning to zero…") if `auto`.
+The editor can offer the same choices as the phone: the two modes, and stills, spin or both.
 
 `result`: `{"complete": true, "shotIds": ["s-11", "s-12", "s-13", "s-14", "s-15"]}`. `complete` is `false` when the user chose `stop` partway, in which case the job state is still `done`, and the shots taken are kept.
 
@@ -397,8 +398,8 @@ Body: `{}`. Brings the phone's Capture screen to the front (the app is in the fo
 
 | `kind` | When | `answers` | Extra fields |
 | --- | --- | --- | --- |
-| `move_failed` | The table didn't move, the ring was lost, or it missed the target | `retry`, `manual` (capture jobs only), `stop` | `view`, `targetDeg`, `targetTableDeg`, `toleranceDeg`, `reason` (`no_movement`, `ring_lost`, `missed_target`) |
-| `position` | Manual mode: the user has to turn the table to a view, or start it turning for the spin | `ready`, `stop` | `view`, `targetDeg`, `targetTableDeg`, `toleranceDeg` |
+| `move_failed` | The table didn't move, the ring was lost, it kept turning when it needed to be at rest, or it missed the target | `retry`, `stop` (older phones also offered `manual`) | `view`, `targetDeg`, `targetTableDeg`, `toleranceDeg`, `reason` (`no_movement`, `ring_lost`, `turning`, `missed_target`) |
+| `position` | By hand: the user has to turn the table (or the badge) to a view and press Capture; or, for the spin, `stage: "start"` asks whether to record it and `stage: "recording"` waits for the end of the recording | `ready`, `stop`; for `stage: "start"`, `ready`, `skip` | `view`, `targetDeg`, `targetTableDeg`, `toleranceDeg`, `stage` (spin only: `start` or `recording`) |
 | `spin_done` | Manual spin without the ring: recording, and the phone can't tell when a full turn has gone by | `done`, `stop` | `view` |
 
 - `view` is the shot's file stem (`side-090`, or `with-saos-installed-side-090` in an extra set). It's `null` for a plain move.
@@ -406,18 +407,17 @@ Body: `{}`. Brings the phone's Capture screen to the front (the app is in the fo
 - `targetTableDeg` is the same target as a table angle, comparable with `ring.tableDeg`, so the editor can show a dial of where the table is against where it should be. `null` when that isn't known (not calibrated, ring not seen at the start, or the spin).
 - `toleranceDeg` is the positioning tolerance (default 2).
 
-**The spin in manual mode** follows [Seamless spin loop](Spec.md#seamless-spin-loop), and the prompts carry the user through it:
+**The spin by hand** follows [Seamless spin loop](Spec.md#seamless-spin-loop), and the prompts carry the user through it:
 
-1. `position` with `view` set to the spin's stem (`spin`, or `with-saos-installed-spin`) and all three angles `null`. Text: "Start the table turning with its remote (continuous rotation), then press Ready once it's turning steadily." Recording starts after `ready`, not before.
-2. With the ring, the phone waits for a steady speed (up to 10 s), records, and stops by itself. Meanwhile the job is `running`, and `progress.text` counts up about twice a second: "Recording the spin: 210° of 375°".
-3. Without the ring, a `spin_done` prompt follows straight away. Text: "Recording. Press Done once the table has gone a little more than once round, past where it was when you pressed Ready." `done` stops the recording and keeps it. `stop` throws it away and ends the job, and the phone sends the notice "Spin not kept. You can stop the table." Either way, the table must have stopped before homing: with IR the phone stops it itself, and without IR it waits for the ring (or the user) to show it has stopped.
-4. Once recording stops, the phone sends a `notice`: "Spin recorded. You can stop the table." The job carries on with encoding, and `progress.text` is "Encoding the spin…".
-5. If the loop may not be clean (the speed varied, or no ring and no good frame match), the phone sends a `warn` notice that says so, and the shot is kept.
+1. `position` with `view: "spin"`, `stage: "start"`, all three angles `null`, and `answers` `ready`, `skip`. Text: "Press Record spin to record the spin video, or Skip video". `skip` ends the capture with the views kept (`complete: true`). Recording starts after `ready`, not before.
+2. `position` with `view: "spin"`, `stage: "recording"`, and `answers` `ready`, `stop`. Text: "Recording: turn the table (or the badge) once round, then press Stop". `ready` stops the recording and keeps it. `stop` throws it away (`complete: false`).
+3. With the ring, the clip is cut to exactly one turn; without it, the whole clip is kept, up to 30 s. Then the job carries on with encoding, and `progress.text` is "Encoding the spin video…".
+
+On the phone, the big button follows the prompt: **Capture** for a view, **Record spin** at `stage: "start"`, **Stop** at `stage: "recording"`. The small one is **Stop**, **Skip video** or **Discard**.
 
 `POST /api/jobs/current/answer` with `{"promptId": "p-3", "answer": "retry"}`:
 
 - The **first answer wins**, whether it comes from the phone or any editor tab. A late or stale answer gets `409 prompt_gone`. An answer not in `answers` gets `400 bad_request`.
-- `manual` switches the rest of the views (and the spin) to manual mode, so `position` prompts follow.
 - `stop` ends the job early. For a capture it's `done` with `complete: false`. For a move or calibration it's `aborted`.
 - The response is the job after the answer is applied.
 

@@ -54,6 +54,30 @@ final class RingHistory implements RingDetector.Listener {
         }
     }
 
+    /**
+     * Waits for enough readings to measure the rate (RATE_WINDOW_NS of them), then returns
+     * {latest angle, signed deg/s}. Null if the ring isn't read within timeoutMs. Doesn't
+     * care whether the table is turning, unlike {@link #waitForStill}.
+     */
+    double[] waitForMotion(long timeoutMs) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (System.currentTimeMillis() < deadline) {
+            double[] last = null;
+            boolean enough;
+            synchronized (readings) {
+                int n = readings.size();
+                if (n > 0) last = readings.get(n - 1);
+                enough = n > 1 && last[0] - readings.get(0)[0] >= RATE_WINDOW_NS;
+            }
+            if (enough) {
+                double r = rate();
+                if (!Double.isNaN(r)) return new double[]{last[1], r};
+            }
+            Thread.sleep(50);
+        }
+        return null;
+    }
+
     /** Waits until the angle stays within tolDeg for stableMs; returns it, or NaN on timeout. */
     double waitForStill(long timeoutMs, double tolDeg, long stableMs) throws InterruptedException {
         long deadline = System.currentTimeMillis() + timeoutMs;

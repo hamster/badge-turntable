@@ -1,7 +1,8 @@
 package org.snurkle.badgeturntable.motion;
 
 public final class MoveFailedException extends Exception {
-    public enum Reason { NO_MOVEMENT, RING_LOST, NO_REMOTE, TIMEOUT, STEP_SIZE, REVERSED }
+    /** TURNING: the ring is read fine, but the table needed to be at rest and wasn't. */
+    public enum Reason { NO_MOVEMENT, RING_LOST, NO_REMOTE, TIMEOUT, STEP_SIZE, REVERSED, TURNING }
 
     public final Reason reason;
 
@@ -14,6 +15,7 @@ public final class MoveFailedException extends Exception {
         switch (reason) {
             case NO_MOVEMENT: return "Can't move the turntable. Check that IR reaches the table and that it's switched on.";
             case RING_LOST: return "Can't see the encoder ring. Is something blocking it?";
+            case TURNING: return "The turntable is still turning. Stop it, then try again.";
             case STEP_SIZE: return getMessage();
             case NO_REMOTE: return "This turntable profile has no code for that move.";
             case REVERSED: return "The turntable changed direction. If it's in intermittent or swing mode, press "

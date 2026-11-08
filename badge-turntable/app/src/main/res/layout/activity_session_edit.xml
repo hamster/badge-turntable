@@ -105,6 +105,17 @@
         android:orientation="horizontal"
         android:padding="16dp">
 
+        <!-- Delete the whole session (asks first); away from Save, and hidden for a new one -->
+        <Button
+            android:id="@+id/delete_session"
+            style="?attr/borderlessButtonStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/delete_session"
+            android:textColor="?attr/colorError"
+            android:visibility="gone"
+            tools:visibility="visible" />
+
         <TextView
             android:id="@+id/save_hint"
             android:layout_width="0dp"

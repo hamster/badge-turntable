@@ -6,6 +6,9 @@ import android.annotation.SuppressLint;
 import android.content.pm.PackageManager;
 import android.hardware.display.DisplayManager;
 import android.os.Bundle;
+import android.text.SpannableString;
+import android.text.Spanned;
+import android.text.style.ForegroundColorSpan;
 import android.util.Log;
 import android.view.Display;
 import android.view.GestureDetector;
@@ -31,6 +34,7 @@ import org.snurkle.badgeturntable.App;
 import org.snurkle.badgeturntable.R;
 import org.snurkle.badgeturntable.camera.CameraController;
 import org.snurkle.badgeturntable.camera.CameraSettings;
+import org.snurkle.badgeturntable.capture.CaptureSequencer;
 import org.snurkle.badgeturntable.jobs.ApiException;
 import org.snurkle.badgeturntable.jobs.Job;
 import org.snurkle.badgeturntable.jobs.JobRunner;
@@ -71,7 +75,7 @@ public final class CaptureActivity extends AppCompatActivity implements JobRunne
     private PreviewView preview;
     private FramingOverlay overlay;
     private TextView status, ringText, remoteText;
-    private MaterialSwitch autoSwitch, barsSwitch;
+    private MaterialSwitch autoSwitch, barsSwitch, movingSwitch;
     /** Set while showCamera moves the bars switch, so its listener doesn't write the change back. */
     private boolean showingBars;
     private Button captureButton, extraButton, calibrateButton, wbButton, lensButton, zoomButton, targetButton;
@@ -114,13 +118,9 @@ public final class CaptureActivity extends AppCompatActivity implements JobRunne
 
         preview = findViewById(R.id.preview);
         overlay = findViewById(R.id.overlay);
-        MaterialSwitch guides = findViewById(R.id.guides);
-        guides.setChecked(rig.prefs.getBoolean("show_guides", true));
-        overlay.setGuidesVisible(guides.isChecked());
-        guides.setOnCheckedChangeListener((b, on) -> {
-            overlay.setGuidesVisible(on);
-            rig.prefs.edit().putBoolean("show_guides", on).apply();
-        });
+        // Guides: toggled by the grid button on the preview's corner (remembered).
+        overlay.setGuidesVisible(rig.prefs.getBoolean("show_guides", true));
+        overlay.setGuidesListener(on -> rig.prefs.edit().putBoolean("show_guides", on).apply());
         // Side bars live in the light box profile (so the editor sees and sets them too).
         barsSwitch = findViewById(R.id.bars);
         barsSwitch.setOnCheckedChangeListener((b, on) -> {
@@ -137,6 +137,13 @@ public final class CaptureActivity extends AppCompatActivity implements JobRunne
         targetButton = findViewById(R.id.target);
         targetButton.setOnClickListener(v -> SessionPicker.show(this, station, io));
         autoSwitch = findViewById(R.id.auto);
+        // Moving shots (remembered): photo spin with the ring, or off to capture each view by hand.
+        movingSwitch = findViewById(R.id.moving);
+        movingSwitch.setChecked(rig.movingShots());
+        movingSwitch.setOnCheckedChangeListener((b, on) -> {
+            rig.setMovingShots(on);
+            updateButtons();  // Auto table only applies to moving shots
+        });
         captureButton = findViewById(R.id.capture);
         extraButton = findViewById(R.id.extra);
         calibrateButton = findViewById(R.id.calibrate);
@@ -322,16 +329,24 @@ public final class CaptureActivity extends AppCompatActivity implements JobRunne
         long now = System.currentTimeMillis();
         if (now - lastRingUiMs < 200) return;
         lastRingUiMs = now;
-        // Two fixed lines: the angle, then tags and where the table is against the front.
+        // Three fixed lines: the angle, the tags, and where the table is against the front
+        // (its own line, so the offset isn't cut off), green when it's at the front.
         String line1 = r.ok() ? getString(R.string.ring_angle, r.angleDeg) : getString(R.string.ring_not_visible);
-        double off = rig.fromFront(r.angleDeg);
-        String front = Double.isNaN(rig.frontRingDeg()) ? getString(R.string.front_not_set)
-                : Double.isNaN(off) ? "" : Math.abs(off) <= 2 ? getString(R.string.at_front)
-                : getString(R.string.front_offset, off);
-        String line2 = getString(R.string.ring_tags, r.ok() ? r.markers : r.markerIds.length)
-                + (front.isEmpty() ? "" : " · " + front);
-        String text = line1 + "\n" + line2;
-        runOnUiThread(() -> ringText.setText(text));
+        String line2 = getString(R.string.ring_tags, r.ok() ? r.markers : r.markerIds.length);
+        boolean frontSet = !Double.isNaN(rig.frontRingDeg());
+        double off = r.ok() ? rig.fromFront(r.angleDeg) : Double.NaN;
+        boolean atFront = !Double.isNaN(off) && Math.abs(off) <= CaptureSequencer.FRONT_TOLERANCE_DEG;
+        String line3 = !frontSet ? getString(R.string.front_not_set)
+                : Double.isNaN(off) ? "" : atFront ? getString(R.string.at_front) : getString(R.string.front_offset, off);
+        SpannableString text = new SpannableString(line1 + "\n" + line2 + "\n" + line3);
+        if (atFront) {
+            text.setSpan(new ForegroundColorSpan(FramingOverlay.GREEN), text.length() - line3.length(), text.length(),
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+        }
+        runOnUiThread(() -> {
+            ringText.setText(text);
+            overlay.setFront(frontSet ? off : Double.NaN);
+        });
     }
 
     // ---- Buttons -------------------------------------------------------------------
@@ -354,38 +369,60 @@ public final class CaptureActivity extends AppCompatActivity implements JobRunne
             SessionPicker.show(this, station, io);
             return;
         }
-        boolean auto = autoSwitch.isChecked() && rig.table != null;
         Station.Target t = station.target();
-        if (t.isSession()) {
+        if (t.isSession() && rig.table != null) {
+            boolean autoNow = autoSwitch.isChecked();
             io.execute(() -> {
                 try {
-                    station.sessions.update(t.sessionId, s -> s.autoMode = auto);
+                    station.sessions.update(t.sessionId, s -> s.autoMode = autoNow);
                 } catch (java.io.IOException ignored) {
                 }
             });
         }
-        if (auto && (!rig.calibrated() || !rig.ring.latest().ok())) {
+        startCaptureChecked(null);
+    }
+
+    /**
+     * Starts a set, checking first what moving shots need: the ring in view, and (driving the
+     * table) a calibration. Either can be skipped by capturing by hand instead.
+     * setLabel is null for the main set.
+     */
+    private void startCaptureChecked(String setLabel) {
+        boolean moving = movingSwitch.isChecked();
+        boolean auto = moving && autoSwitch.isChecked() && rig.table != null;
+        if (moving && !rig.ring.latest().ok()) {
+            new MaterialAlertDialogBuilder(this)
+                    .setTitle(R.string.no_ring_title)
+                    .setMessage(R.string.no_ring_message)
+                    .setPositiveButton(R.string.capture_by_hand, (d, w) -> {
+                        movingSwitch.setChecked(false);
+                        startCapture(false, false, setLabel);
+                    })
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .show();
+            return;
+        }
+        if (auto && !rig.calibrated()) {
             new MaterialAlertDialogBuilder(this)
                     .setTitle(R.string.calibrate_first_title)
                     .setMessage(R.string.calibrate_first_message)
                     .setPositiveButton(R.string.calibrate, (d, w) -> onCalibrate())
                     .setNeutralButton(R.string.use_manual, (d, w) -> {
                         autoSwitch.setChecked(false);
-                        startCapture(false, null);
+                        startCapture(true, false, setLabel);
                     })
                     .setNegativeButton(android.R.string.cancel, null)
                     .show();
             return;
         }
-        startCapture(auto, null);
+        startCapture(moving, auto, setLabel);
     }
 
-    /** setLabel is null for the main set. */
-    private void startCapture(boolean auto, String setLabel) {
+    private void startCapture(boolean moving, boolean auto, String setLabel) {
         Session s = openSession();
         boolean video = s == null || s.captureVideo;
         try {
-            rig.startCapture(Job.PHONE, auto, true, video, setLabel);
+            rig.startCapture(Job.PHONE, moving, auto, true, video, setLabel);
         } catch (ApiException e) {
             Toast.makeText(this, e.getMessage(), Toast.LENGTH_LONG).show();
         }
@@ -395,7 +432,8 @@ public final class CaptureActivity extends AppCompatActivity implements JobRunne
         Job job = rig.jobs.current();
         if (job != null) {
             Job.Prompt p = job.prompt();
-            if (p != null && p.answers.contains("stop")) answer(p, "stop");
+            if (p != null && p.answers.contains("skip")) answer(p, "skip");  // Skip video
+            else if (p != null && p.answers.contains("stop")) answer(p, "stop");  // Stop, or Discard the recording
             else {
                 try {
                     rig.jobs.abort();
@@ -431,7 +469,7 @@ public final class CaptureActivity extends AppCompatActivity implements JobRunne
                 .setPositiveButton(android.R.string.ok, (d, w) -> {
                     String label = input.getText().toString().trim();
                     if (label.isEmpty()) return;
-                    if (wholeSet) startCapture(autoSwitch.isChecked() && rig.table != null, label);
+                    if (wholeSet) startCaptureChecked(label);
                     else captureExtra(label);
                 })
                 .setNegativeButton(android.R.string.cancel, null)
@@ -513,12 +551,20 @@ public final class CaptureActivity extends AppCompatActivity implements JobRunne
         Job.Prompt p = busy ? job.prompt() : null;
         boolean ready = p != null && "position".equals(p.kind);
 
-        captureButton.setText(ready ? R.string.ready : R.string.capture);
+        // By hand, the big button does the next thing: capture this view, record the spin, or
+        // stop the recording (keeping it). The small one stops, skips the video or discards it.
+        String stage = ready ? p.detail("stage") : null;
+        captureButton.setText(!ready ? R.string.capture
+                : "start".equals(stage) ? R.string.record_spin
+                : "recording".equals(stage) ? R.string.stop_recording : R.string.capture);
         captureButton.setEnabled(!busy || ready);
-        extraButton.setText(busy ? R.string.stop : R.string.extra_shot);
+        extraButton.setText(!busy ? R.string.extra_shot
+                : "start".equals(stage) ? R.string.skip_video
+                : "recording".equals(stage) ? R.string.discard_video : R.string.stop);
         calibrateButton.setEnabled(!busy && rig.table != null);
         findViewById(R.id.set_front).setEnabled(!busy);
-        autoSwitch.setEnabled(!busy && rig.table != null);
+        movingSwitch.setEnabled(!busy);
+        autoSwitch.setEnabled(!busy && rig.table != null && movingSwitch.isChecked());
         targetButton.setEnabled(!busy);
         // The bars are taken when a capture starts; changing them mid-way would mean nothing.
         barsSwitch.setEnabled(!busy);

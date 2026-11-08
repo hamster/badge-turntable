@@ -268,7 +268,7 @@ public final class Rig {
 
     private double forwardTo(double tableTarget) throws MoveFailedException, InterruptedException {
         double now = table.waitForStable(3000, 0.5, 300);
-        if (Double.isNaN(now)) throw new MoveFailedException(MoveFailedException.Reason.RING_LOST, "ring not readable");
+        if (Double.isNaN(now)) throw table.notSettled("before the move");
         double d = (tableTarget - tableDeg(now)) % 360;
         return d < 0 ? d + 360 : d;
     }
@@ -277,6 +277,7 @@ public final class Rig {
         switch (e.reason) {
             case NO_MOVEMENT: return "no_movement";
             case RING_LOST: return "ring_lost";
+            case TURNING: return "turning";
             default: return "missed_target";
         }
     }
@@ -305,6 +306,20 @@ public final class Rig {
 
     // ---- Captures ------------------------------------------------------------------
 
+    /**
+     * Moving shots (the Capture screen's switch, remembered): photo spin with the ring, or
+     * off for by hand. Phones still set to the old Capture method "Stop at each view" ("step")
+     * start off.
+     */
+    public boolean movingShots() {
+        if (prefs.contains("moving_shots")) return prefs.getBoolean("moving_shots", true);
+        return !"step".equals(prefs.getString("capture_method", "spin"));
+    }
+
+    public void setMovingShots(boolean on) {
+        prefs.edit().putBoolean("moving_shots", on).remove("capture_method").apply();
+    }
+
     /** The capture options from Settings. */
     public CaptureSequencer.Options options(boolean auto, boolean stills, boolean video, String setLabel) {
         CaptureSequencer.Options o = new CaptureSequencer.Options();
@@ -314,7 +329,7 @@ public final class Rig {
         o.setLabel = setLabel == null || setLabel.trim().isEmpty() ? null : setLabel.trim();
         o.manualDelayMs = parseInt(prefs.getString("manual_delay_ms", "2000"), 2000);
         o.videoOverlapDeg = parseInt(prefs.getString("video_overlap_deg", "15"), 15);
-        o.spin = "spin".equals(prefs.getString("capture_method", "spin"));
+        o.moving = movingShots();
         o.photoSecondsPerRev = parseInt(prefs.getString("spin_photo_spr", "30"), 30);
         o.videoSecondsPerRev = parseInt(prefs.getString("spin_video_spr", "15"), 15);
         o.frontRingDeg = frontRingDeg();
@@ -358,17 +373,23 @@ public final class Rig {
      * A turntable set (or an extra set, with setLabel): the four views, the spin, or both,
      * into the current target ({@link Station#targetFor}).
      * @param source {@link Job#PHONE} or {@link Job#EDITOR}
+     * @param moving moving shots, or by hand; null for the Capture screen's switch
+     * @param auto   moving shots only: drive the table with IR (ignored by hand)
      */
-    public Job startCapture(String source, boolean auto, boolean stills, boolean video, String setLabel)
-            throws ApiException {
+    public Job startCapture(String source, Boolean moving, boolean auto, boolean stills, boolean video,
+                            String setLabel) throws ApiException {
         if (!stills && !video) throw ApiException.badRequest("stills", "Ask for the stills, the spin or both.");
-        if (auto && table == null) {
-            throw ApiException.unsupported("auto", "This phone can't drive the turntable (no IR blaster or no remote). Use manual mode.");
+        boolean mv = moving != null ? moving : movingShots();
+        boolean drive = mv && auto;
+        if (drive && table == null) {
+            throw ApiException.unsupported("auto", "This phone can't drive the turntable (no IR blaster or no remote). "
+                    + "Turn Auto table off, and start the table by hand.");
         }
-        precheckCamera(auto);
+        precheckCamera(drive);
         Station.Target t = station.targetFor(source);
-        CaptureSequencer.Options o = options(auto, stills, video, setLabel);
-        JSONObject params = Json.obj("stills", stills, "video", video, "auto", auto, "setLabel", o.setLabel);
+        CaptureSequencer.Options o = options(drive, stills, video, setLabel);
+        o.moving = mv;
+        JSONObject params = Json.obj("stills", stills, "video", video, "moving", mv, "auto", drive, "setLabel", o.setLabel);
         return jobs.start(Job.Kind.CAPTURE, source, t.jobJson(), params, job -> {
             job.setCamera(cameraSettingsJson());
             boolean complete = sequencer.capture(writer(t, job), o, new JobListener(job));
@@ -426,6 +447,22 @@ public final class Rig {
             String a = job.ask("position", instruction, Arrays.asList("ready", "stop"), Json.obj(
                     "view", view == null ? "spin" : viewName, "targetDeg", view == null ? null : view.angle,
                     "targetTableDeg", Json.deg(tableDeg(targetRing)), "toleranceDeg", TOLERANCE_DEG));
+            return "ready".equals(a);
+        }
+
+        @Override
+        public boolean askRecordSpin() throws InterruptedException {
+            String a = job.ask("position", "Press Record spin to record the spin video, or Skip video",
+                    Arrays.asList("ready", "skip"), Json.obj("view", "spin", "stage", "start", "targetDeg", null,
+                            "targetTableDeg", null, "toleranceDeg", TOLERANCE_DEG));
+            return "ready".equals(a);
+        }
+
+        @Override
+        public boolean awaitSpinRecorded(String instruction) throws InterruptedException {
+            String a = job.ask("position", instruction, Arrays.asList("ready", "stop"), Json.obj(
+                    "view", "spin", "stage", "recording", "targetDeg", null, "targetTableDeg", null,
+                    "toleranceDeg", TOLERANCE_DEG));
             return "ready".equals(a);
         }
 

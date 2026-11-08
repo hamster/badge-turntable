@@ -4,7 +4,6 @@ import android.content.Intent;
 import android.os.Bundle;
 import android.view.Menu;
 import android.view.MenuItem;
-import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
@@ -16,8 +15,6 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
 import org.snurkle.badgeturntable.App;
 import org.snurkle.badgeturntable.R;
-import org.snurkle.badgeturntable.jobs.ApiException;
-import org.snurkle.badgeturntable.jobs.Job;
 import org.snurkle.badgeturntable.remote.RemoteServer;
 import org.snurkle.badgeturntable.rig.Station;
 import org.snurkle.badgeturntable.session.Session;
@@ -112,36 +109,8 @@ public final class MainActivity extends AppCompatActivity implements SessionAdap
         CharSequence[] items = new CharSequence[]{getString(R.string.delete)};
         new MaterialAlertDialogBuilder(this)
                 .setTitle(s.name)
-                .setItems(items, (d, which) -> confirmDelete(s))
+                .setItems(items, (d, which) -> SessionDelete.confirm(this, station, io, s))
                 .show();
-    }
-
-    private void confirmDelete(Session s) {
-        new MaterialAlertDialogBuilder(this)
-                .setTitle(getString(R.string.delete_session_title, s.name))
-                .setMessage(R.string.delete_session_message)
-                .setPositiveButton(R.string.delete, (d, w) -> delete(s))
-                .setNegativeButton(android.R.string.cancel, null)
-                .show();
-    }
-
-    /** The open session is closed first; one being captured into can't be deleted. */
-    private void delete(Session s) {
-        Job running = station.jobs.current();
-        if (running != null && s.id.equals(running.targetSessionId())) {
-            Toast.makeText(this, getString(R.string.delete_session_busy, s.name), Toast.LENGTH_LONG).show();
-            return;
-        }
-        Station.Target t = station.target();
-        if (t.isSession() && s.id.equals(t.sessionId)) {
-            try {
-                station.closeTarget(Job.PHONE);
-            } catch (ApiException e) {
-                Toast.makeText(this, e.getMessage(), Toast.LENGTH_LONG).show();
-                return;
-            }
-        }
-        io.execute(() -> station.sessions.delete(s));
     }
 
     // ---- Menu --------------------------------------------------------------------

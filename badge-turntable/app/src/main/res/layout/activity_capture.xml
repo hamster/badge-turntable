@@ -88,15 +88,15 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@id/top_bar">
 
-        <!-- The ring reading: two fixed lines, so nothing shifts as it changes -->
+        <!-- The ring reading: three fixed lines, so nothing shifts as it changes -->
         <TextView
             android:id="@+id/ring"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:fontFamily="monospace"
-            android:lines="2"
+            android:lines="3"
             android:textColor="#CCFFFFFF"
-            tools:text="Ring 204.4°\n10 tags · front +0.3°" />
+            tools:text="Ring 204.4°\n10 tags\nFront +12.3°" />
 
         <Button
             android:id="@+id/set_front"
@@ -228,21 +228,23 @@
             android:paddingHorizontal="8dp"
             tools:text="Badge: Mk9" />
 
+        <!-- Moving shots: photo spin with the ring; off, each view is taken by hand -->
+        <com.google.android.material.materialswitch.MaterialSwitch
+            android:id="@+id/moving"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:maxLines="1"
+            app:switchPadding="4dp"
+            android:text="@string/moving_shots"
+            android:textAppearance="?attr/textAppearanceBodyMedium"
+            android:textColor="@android:color/white" />
+
         <com.google.android.material.materialswitch.MaterialSwitch
             android:id="@+id/auto"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:maxLines="1"
             android:text="@string/auto_turntable"
-            android:textAppearance="?attr/textAppearanceBodyMedium"
-            android:textColor="@android:color/white" />
-
-        <com.google.android.material.materialswitch.MaterialSwitch
-            android:id="@+id/guides"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:maxLines="1"
-            android:text="@string/guides"
             android:textAppearance="?attr/textAppearanceBodyMedium"
             android:textColor="@android:color/white" />
 

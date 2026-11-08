@@ -157,8 +157,9 @@ final class RemoteApi implements HttpServer.Handler {
                     boolean stills = !Boolean.FALSE.equals(body.opt("stills"));
                     boolean video = !Boolean.FALSE.equals(body.opt("video"));
                     boolean auto = !Boolean.FALSE.equals(body.opt("auto"));
+                    Boolean moving = bool(body, "moving");  // null: the phone's Moving shots switch
                     String setLabel = body.isNull("setLabel") ? null : body.optString("setLabel", "").trim();
-                    return accepted(rig.startCapture(Job.EDITOR, auto, stills, video,
+                    return accepted(rig.startCapture(Job.EDITOR, moving, auto, stills, video,
                             setLabel == null || setLabel.isEmpty() ? null : setLabel));
                 }
                 break;

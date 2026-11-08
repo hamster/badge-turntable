@@ -20,14 +20,6 @@
         <item>3000</item>
         <item>5000</item>
     </string-array>
-    <string-array name="capture_method_names">
-        <item>Spin: photos on the move, then video</item>
-        <item>Stop at each view</item>
-    </string-array>
-    <string-array name="capture_method_values">
-        <item>spin</item>
-        <item>step</item>
-    </string-array>
     <!-- The JAYEGT's three speeds. -->
     <string-array name="spin_speed_names">
         <item>30 s per turn (slowest)</item>

@@ -54,7 +54,7 @@ public final class SessionEditActivity extends AppCompatActivity implements Sess
 
     private TextInputEditText name, notes;
     private CheckBox video, auto;
-    private Button saveButton, cameraButton;
+    private Button saveButton, cameraButton, deleteButton;
     private TextView saveHint, mediaEmpty;
     private RecyclerView mediaList;
     private MediaAdapter mediaAdapter;
@@ -100,6 +100,11 @@ public final class SessionEditActivity extends AppCompatActivity implements Sess
 
         saveButton.setOnClickListener(v -> save(false));
         cameraButton.setOnClickListener(v -> save(true));
+        // Deleting closes this screen: the store tells onSessionRemoved.
+        deleteButton = findViewById(R.id.delete_session);
+        deleteButton.setOnClickListener(v -> {
+            if (session != null && !isNew) SessionDelete.confirm(this, station, io, session);
+        });
         saveButton.setEnabled(false);
         cameraButton.setEnabled(false);
         name.addTextChangedListener(new SimpleWatcher(this::checkSavable));
@@ -150,6 +155,7 @@ public final class SessionEditActivity extends AppCompatActivity implements Sess
         notes.setText(s.notes);
         video.setChecked(s.captureVideo);
         auto.setChecked(s.autoMode && autoUnavailable == null);
+        deleteButton.setVisibility(isNew ? View.GONE : View.VISIBLE);
         checkSavable();
     }
 

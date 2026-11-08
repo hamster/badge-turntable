@@ -11,6 +11,7 @@ import android.util.AttributeSet;
 import android.view.MotionEvent;
 import android.view.View;
 
+import org.snurkle.badgeturntable.capture.CaptureSequencer;
 import org.snurkle.badgeturntable.media.SideBars;
 import org.snurkle.badgeturntable.ring.RingDetector;
 import org.snurkle.badgeturntable.ring.RingReading;
@@ -32,7 +33,8 @@ public final class FramingOverlay extends View {
     private static final int GOOD_MARKERS = 8;
     /** The axis counts as centred within this fraction of the frame width. */
     private static final float CENTRED = 0.02f;
-    private static final int GREEN = 0xFF4CD964, AMBER = 0xFFF2B134, CYAN = 0xFF5AC8FA, GUIDE = 0x66FFFFFF;
+    static final int GREEN = 0xFF4CD964;
+    private static final int AMBER = 0xFFF2B134, CYAN = 0xFF5AC8FA, GUIDE = 0x66FFFFFF;
 
     private final float dp = getResources().getDisplayMetrics().density;
     private final Paint guide = stroke(GUIDE, 1);
@@ -67,6 +69,84 @@ public final class FramingOverlay extends View {
     private long focusUntilMs;
     private static final long FOCUS_SHOW_MS = 1500;
 
+    /**
+     * Degrees from the front (Set front), NaN if there's no front or no reading. Shown on the
+     * picture when it's near: amber with the offset, green "At the front" within tolerance,
+     * so the table can be turned there by hand while watching the preview.
+     */
+    private double frontOffset = Double.NaN;
+    /** Further than this from the front, nothing is shown (the left column still has it). */
+    private static final double FRONT_SHOW_WITHIN_DEG = 30;
+
+    /** The guides on/off button, in the picture's top right corner (the columns have no room). */
+    public interface GuidesListener {
+        void onGuidesChanged(boolean on);
+    }
+
+    private GuidesListener guidesListener;
+    private final RectF guidesButton = new RectF();
+    private final Paint buttonFill = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint buttonLine = stroke(Color.WHITE, 1.5f);
+    private boolean pressingGuides;
+
+    public void setGuidesListener(GuidesListener l) {
+        guidesListener = l;
+    }
+
+    /** A rounded square with a 3x3 grid: bright when the guides are on, dim when off. */
+    private void drawGuidesButton(Canvas c) {
+        float size = 36 * dp, pad = 8 * dp;
+        guidesButton.set(image.right - pad - size, image.top + pad, image.right - pad, image.top + pad + size);
+        buttonFill.setColor(pressingGuides ? 0xCC000000 : 0x80000000);
+        float r = 6 * dp;
+        c.drawRoundRect(guidesButton, r, r, buttonFill);
+        buttonLine.setAlpha(guides ? 255 : 110);
+        float in = 8 * dp, l = guidesButton.left + in, t = guidesButton.top + in;
+        float w = guidesButton.width() - 2 * in;
+        c.drawRect(l, t, l + w, t + w, buttonLine);
+        for (int i = 1; i <= 2; i++) {
+            c.drawLine(l + w * i / 3, t, l + w * i / 3, t + w, buttonLine);
+            c.drawLine(l, t + w * i / 3, l + w, t + w * i / 3, buttonLine);
+        }
+    }
+
+    /** Handles a touch on the guides button; true if it was one. */
+    private boolean touchGuidesButton(MotionEvent e) {
+        // A finger-sized target around the drawn square.
+        float slop = 8 * dp;
+        boolean inside = e.getX() >= guidesButton.left - slop && e.getX() <= guidesButton.right + slop
+                && e.getY() >= guidesButton.top - slop && e.getY() <= guidesButton.bottom + slop;
+        switch (e.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN:
+                if (!inside || guidesButton.isEmpty()) return false;
+                pressingGuides = true;
+                invalidate();
+                return true;
+            case MotionEvent.ACTION_UP:
+                if (!pressingGuides) return false;
+                pressingGuides = false;
+                if (inside) {
+                    setGuidesVisible(!guides);
+                    if (guidesListener != null) guidesListener.onGuidesChanged(guides);
+                    performClick();
+                }
+                invalidate();
+                return true;
+            case MotionEvent.ACTION_CANCEL:
+                if (!pressingGuides) return false;
+                pressingGuides = false;
+                invalidate();
+                return true;
+            default:
+                return pressingGuides;
+        }
+    }
+
+    @Override
+    public boolean performClick() {
+        return super.performClick();
+    }
+
     /** Called when the user lets go of a side bar they dragged. Main thread. */
     public interface BarsListener {
         void onBarsMoved(float left, float right);
@@ -96,6 +176,25 @@ public final class FramingOverlay extends View {
         barHandle.setColor(Color.WHITE);
     }
 
+    /** Degrees from the front, or NaN for none. Main thread. */
+    public void setFront(double offDeg) {
+        if (Double.compare(offDeg, frontOffset) == 0) return;
+        frontOffset = offDeg;
+        invalidate();
+    }
+
+    private void drawFront(Canvas c) {
+        double off = frontOffset;
+        if (Double.isNaN(off) || Math.abs(off) > FRONT_SHOW_WITHIN_DEG) return;
+        boolean at = Math.abs(off) <= CaptureSequencer.FRONT_TOLERANCE_DEG;
+        String text = at ? "At the front" : String.format(java.util.Locale.ROOT, "Front %+.1f°", off);
+        label.setColor(at ? GREEN : AMBER);
+        float size = label.getTextSize();
+        label.setTextSize(size * 1.3f);  // bigger than the other labels: it's read from a step back
+        c.drawText(text, image.left + 10 * dp, image.top + 26 * dp, label);
+        label.setTextSize(size);
+    }
+
     /** The side bars to show (from the light box profile). Ignored while one is being dragged. */
     public void setBars(SideBars b) {
         bars = b;
@@ -117,6 +216,7 @@ public final class FramingOverlay extends View {
     @Override
     @SuppressLint("ClickableViewAccessibility")
     public boolean onTouchEvent(MotionEvent e) {
+        if (touchGuidesButton(e)) return true;
         if (!bars.enabled || !barsEditable || image.width() <= 0) return false;
         float x = e.getX();
         switch (e.getActionMasked()) {
@@ -244,6 +344,9 @@ public final class FramingOverlay extends View {
             label.setColor(zone.getColor() == GUIDE ? Color.WHITE : zone.getColor());
             c.drawText(text, box.left + 8 * dp, box.top - 6 * dp, label);
         }
+
+        drawFront(c);
+        drawGuidesButton(c);
 
         if (android.os.SystemClock.uptimeMillis() < focusUntilMs) {
             c.drawCircle(focusX, focusY, 28 * dp, focus);

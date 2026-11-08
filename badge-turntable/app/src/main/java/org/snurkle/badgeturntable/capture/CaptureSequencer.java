@@ -27,7 +27,6 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.TimeUnit;
-import java.util.function.DoubleSupplier;
 
 /**
  * Runs one capture: the four views (auto or manual), the optional spin video, then homing.
@@ -58,18 +57,33 @@ public final class CaptureSequencer {
                               MoveFailedException e) throws InterruptedException;
 
         /**
-         * Manual mode: show the instruction (and dial, if targetRing isn't NaN). Returns true
-         * when the table is in place, false to stop.
-         * @param view null for the spin
+         * By hand: show the instruction (and dial, if targetRing isn't NaN). Returns true when
+         * the user presses Capture with the view in place, false to stop.
          */
         boolean awaitManualPosition(String viewName, View view, String instruction, double targetRing)
                 throws InterruptedException;
+
+        /** By hand, after the views: true to record the spin video (Capture), false to skip it. */
+        boolean askRecordSpin() throws InterruptedException;
+
+        /** By hand, while the spin records: true when the user presses Stop to keep it, false to discard it. */
+        boolean awaitSpinRecorded(String instruction) throws InterruptedException;
 
         /** Before a manual still or an extra shot, once a second. 0 when it's over. */
         default void onCountdown(long remainingMs) {}
     }
 
     public static final class Options {
+        /**
+         * Moving shots: the table turns continuously, the four stills are taken as the ring
+         * passes each angle (photo spin), then the video is recorded on the next revolution(s).
+         * Needs the ring; with IR (auto) the app drives the table, otherwise the user starts it.
+         * Off: by hand. Each view is asked for in turn and taken when the user presses
+         * Capture, then the spin is recorded until they press Stop. No ring, IR or turntable
+         * needed: the badge can be turned by hand.
+         */
+        public boolean moving = true;
+        /** Moving shots only: the app starts, sets the speed of and stops the table with IR. */
         public boolean auto = true;
         /** The four views. Without them (and with video) it's a spin-only capture. */
         public boolean stills = true;
@@ -77,13 +91,6 @@ public final class CaptureSequencer {
         public String setLabel;           // null for the main set
         public long manualDelayMs = 2000;
         public double videoOverlapDeg = 15;
-        /**
-         * Spin instead of stop-and-shoot: the table turns continuously, the four stills are
-         * taken as the ring passes each angle (photo spin), then the video is recorded on
-         * the next revolution(s). Needs the ring, but no IR: without a remote the user starts
-         * the table.
-         */
-        public boolean spin = true;
         /** Speeds the app sets with the remote's speed buttons, when it has them. */
         public double photoSecondsPerRev = 30;
         public double videoSecondsPerRev = 15;
@@ -94,8 +101,11 @@ public final class CaptureSequencer {
         public double frontRingDeg = Double.NaN;
     }
 
-    /** Closer than this to the front counts as there: the positioning tolerance. */
-    private static final double FRONT_TOLERANCE_DEG = 2.0;
+    /**
+     * Closer than this to the front counts as there: the positioning tolerance, and when the
+     * Capture screen shows "At the front".
+     */
+    public static final double FRONT_TOLERANCE_DEG = 2.5;
 
     /**
      * Most motion blur allowed in a photo-spin still, at the edge of a large badge (60 mm
@@ -129,7 +139,12 @@ public final class CaptureSequencer {
 
     /** Number of steps a capture with these options reports. */
     public int stepCount(Options o) {
-        return (o.stills ? 4 : 0) + (o.video ? 1 : 0) + (o.auto && table != null ? 1 : 0);
+        return (o.stills ? 4 : 0) + (o.video ? 1 : 0) + (drives(o) ? 1 : 0);
+    }
+
+    /** Whether the app drives the table with IR: moving shots with auto, and a remote. */
+    private boolean drives(Options o) {
+        return o.moving && o.auto && table != null;
     }
 
     /** The spin video's step number: after the four views, or first in a spin-only capture. */
@@ -139,17 +154,17 @@ public final class CaptureSequencer {
 
     /** @return true if every view asked for (and the spin, if asked for) was captured */
     public boolean capture(CaptureTarget t, Options o, Listener l) throws Exception {
-        boolean drive = o.auto && table != null;
+        boolean drive = drives(o);
         bars = camera.settings().bars();
         try {
             boolean complete;
-            if (!o.stills) {
+            if (!o.moving) {
+                complete = !o.stills || runByHand(t, o, l);
+                if (complete && o.video) complete = recordSpinByHand(t, o, l);
+            } else if (!o.stills) {
                 complete = !o.video || runSpinOnly(t, o, l);
-            } else if (o.spin) {
-                complete = runSpin(t, o, l);
             } else {
-                complete = runViews(t, o, l);
-                if (complete && o.video) complete = recordSpin(t, o, l, drive, false, null);
+                complete = runSpin(t, o, l);
             }
             t.finish();
             if (drive) {
@@ -180,115 +195,79 @@ public final class CaptureSequencer {
         }
     }
 
-    /** @return true if all four views were captured */
-    private boolean runViews(CaptureTarget t, Options o, Listener l) throws Exception {
+    /**
+     * By hand: each view in turn is asked for ("Turn the badge to Side (90°), then press
+     * Capture") and taken when the user presses Capture, after the countdown, so touching the
+     * phone doesn't shake the shot. Needs no ring, IR or turntable: the badge can be turned by
+     * hand. If the ring is read, each still's actual angle is recorded, and the dial shows the
+     * target.
+     * @return true if all four views were captured
+     */
+    private boolean runByHand(CaptureTarget t, Options o, Listener l) throws Exception {
         String prefix = Slugs.setPrefix(o.setLabel);
-        boolean auto = o.auto && table != null;
         Calibration cal = table == null ? null : table.calibration();
         double sign = cal != null ? cal.directionSign : 1;
         int of = stepCount(o);
         camera.lock3A();
         Thread.sleep(800);  // let the locks settle
 
-        RingReading startReading = ring.latest();
-        double start = startReading.ok() ? startReading.angleDeg : Double.NaN;
-        if (!Double.isNaN(o.frontRingDeg)) {
-            Decision d = turnToFront(prefix + View.FRONT.baseName, start, auto, of, o, l);
-            if (d == Decision.STOP) return false;
-            if (d == Decision.MANUAL) auto = false;
-            start = o.frontRingDeg;
-        }
-
+        // The angles are from the front: the one set with Set front, or else the ring angle
+        // when the front is taken. NaN without the ring: then no angles are recorded.
+        double front = o.frontRingDeg;
         int step = 0;
         for (View view : View.values()) {
             step++;
             String name = prefix + view.baseName;
-            double target = Double.isNaN(start) ? Double.NaN : norm(start + sign * view.angle);
-            if (view != View.FRONT) {
-                if (auto) {
-                    l.onStep(step, of, "Turning to " + view.angle + "°…");
-                    Decision d = moveWithRetry(name, view, target, () -> 90, l);
-                    if (d == Decision.STOP) return false;
-                    if (d == Decision.MANUAL) auto = false;
-                }
-                if (!auto) {
-                    String turn = "Turn the table to " + view.angle + "°, then tap Ready";
-                    l.onStep(step, of, turn);
-                    boolean ready = l.awaitManualPosition(name, view, turn, target);
-                    if (!ready) return false;
-                    countdown(o.manualDelayMs, l);
-                    if (table != null) table.waitForStable(3000, 0.5, 300);
-                }
-            }
+            double target = Double.isNaN(front) ? Double.NaN : norm(front + sign * view.angle);
+            String ask = view == View.FRONT
+                    ? "Turn the badge to face the camera, then press Capture"
+                    : "Turn the badge to " + view.caption + ", then press Capture";
+            l.onStep(step, of, ask);
+            if (!l.awaitManualPosition(name, view, ask, target)) return false;
+            countdown(o.manualDelayMs, l);
             l.onStep(step, of, "Capturing " + view.caption + "…");
             File original = t.scratchFile(view.filename(prefix));
             takeStill(original);
             RingReading r = ring.latest();
-            double actual = r.ok() && !Double.isNaN(start) ? fromFront(view.angle, r.angleDeg, start, sign) : Double.NaN;
+            if (view == View.FRONT && Double.isNaN(front) && r.ok()) front = r.angleDeg;
+            double actual = r.ok() && !Double.isNaN(front) ? fromFront(view.angle, r.angleDeg, front, sign) : Double.NaN;
             record(t, original, view.filename(prefix), view.caption(o.setLabel), view.angle, actual, o.setLabel);
         }
         return true;
     }
 
     /**
-     * A front was set (Set front): turns there first if the table is more than the tolerance
-     * away (auto), or asks the user to (manual).
-     * @param start the ring angle now, or NaN if it can't be read
-     * @return RETRY to carry on as asked, MANUAL to carry on by hand, STOP to stop
+     * The spin by hand: asks whether to record it (Capture, or Skip video), then records until
+     * the user presses Stop, having turned the table (or the badge) once round. With the ring,
+     * the clip is cut to exactly one turn; without it, the whole clip is kept, up to 30 s.
+     * @return true unless the user discarded the recording
      */
-    private Decision turnToFront(String name, double start, boolean auto, int of, Options o, Listener l)
-            throws Exception {
-        double front = o.frontRingDeg;
-        if (!Double.isNaN(start) && Math.abs(RingReading.delta(start, front)) <= FRONT_TOLERANCE_DEG) {
-            return Decision.RETRY;
+    private boolean recordSpinByHand(CaptureTarget t, Options o, Listener l) throws Exception {
+        l.onStep(videoStep(o), stepCount(o), "Press Record spin to record the spin video, or Skip video");
+        if (!l.askRecordSpin()) {
+            l.onStatus("Spin video skipped");
+            return true;
         }
-        Decision result = Decision.RETRY;
-        boolean byHand = !auto;
-        if (auto) {
-            Calibration cal = table.calibration();
-            l.onStep(1, of, "Turning to the front…");
-            Decision d = moveWithRetry(name, View.FRONT, front, () -> {
-                RingReading now = ring.latest();
-                return now.ok() ? cal.forward(now.angleDeg, front) : 0;
-            }, l);
-            if (d == Decision.STOP) return d;
-            if (d == Decision.MANUAL) {
-                byHand = true;
-                result = Decision.MANUAL;
-            }
-        }
-        if (byHand) {
-            String turn = "Turn the table to the front, then tap Ready";
-            l.onStep(1, of, turn);
-            if (!l.awaitManualPosition(name, View.FRONT, turn, front)) return Decision.STOP;
-            countdown(o.manualDelayMs, l);
-            if (table != null) table.waitForStable(3000, 0.5, 300);
-        }
-        return result;
+        return recordSpin(t, o, l, false, null);
     }
 
     /**
-     * Spin only (no stills): turn to the front if one is set, then record the spin, the
-     * same way as after stop-and-shoot views.
+     * Moving shots, spin only (no stills): with IR, get the table turning at the video speed
+     * and record a turn; otherwise the user turns the table while it records, as by hand.
      * @return false if the user stopped it
      */
     private boolean runSpinOnly(CaptureTarget t, Options o, Listener l) throws Exception {
         camera.lock3A();
         Thread.sleep(800);  // let the locks settle
-        boolean drive = o.auto && table != null;
-        if (!Double.isNaN(o.frontRingDeg)) {
-            RingReading now = ring.latest();
-            Decision d = turnToFront(Slugs.setPrefix(o.setLabel) + "spin", now.ok() ? now.angleDeg : Double.NaN,
-                    drive, stepCount(o), o, l);
-            if (d == Decision.STOP) return false;
-            if (d == Decision.MANUAL) drive = false;  // carry on by hand: the user starts the spin too
-        }
-        if (!drive) return recordSpin(t, o, l, false, false, null);
+        if (!drives(o)) return recordSpinByHand(t, o, l);
 
-        // As after a photo spin: get the table turning at the video speed, then record a turn.
         l.onStep(videoStep(o), stepCount(o), "Recording the spin…");
-        l.onStatus("Starting the turntable…");
-        table.start();
+        if (table.startToggles() && isTurning()) {
+            l.onStatus("Already turning…");  // Start/Stop would stop it
+        } else {
+            l.onStatus("Starting the turntable…");
+            table.start();
+        }
         boolean[] turning = {true};
         Runnable stopTurning = () -> {
             if (!turning[0]) return;
@@ -302,7 +281,7 @@ public final class CaptureSequencer {
         try {
             l.onStatus("Setting the speed for the video…");
             table.setSpeed(o.videoSecondsPerRev);
-            return recordSpin(t, o, l, true, true, stopTurning);
+            return recordSpin(t, o, l, true, stopTurning);
         } finally {
             boolean interrupted = clearInterrupt();  // so stopping the table isn't cut short
             stopTurning.run();
@@ -310,18 +289,15 @@ public final class CaptureSequencer {
         }
     }
 
-    /** Turns forward by degrees (worked out again on each retry), asking what to do if it fails. */
-    private Decision moveWithRetry(String name, View view, double target, DoubleSupplier degrees, Listener l)
-            throws Exception {
-        while (true) {
-            try {
-                double d = degrees.getAsDouble();
-                if (d >= 1 && d <= 359) table.moveBy(d);
-                return Decision.RETRY;  // moved fine; carry on
-            } catch (MoveFailedException e) {
-                Decision d = l.onMoveFailed(name, view, target, true, e);
-                if (d != Decision.RETRY) return d;
-            }
+    /** Whether the ring shows the table turning now (false if it can't be read). */
+    private boolean isTurning() throws InterruptedException {
+        RingHistory history = new RingHistory();
+        ring.addListener(history);
+        try {
+            double[] motion = history.waitForMotion(1500);
+            return motion != null && Math.abs(motion[1]) > RingHistory.MIN_RATE;
+        } finally {
+            ring.removeListener(history);
         }
     }
 
@@ -339,7 +315,7 @@ public final class CaptureSequencer {
      */
     private boolean runSpin(CaptureTarget t, Options o, Listener l) throws Exception {
         String prefix = Slugs.setPrefix(o.setLabel);
-        boolean drive = o.auto && table != null;
+        boolean drive = drives(o);
         int of = stepCount(o);
         RingHistory history = new RingHistory();
         ring.addListener(history);
@@ -364,18 +340,27 @@ public final class CaptureSequencer {
             camera.lock3A();
             camera.setFlyingStills(true);
             Thread.sleep(800);  // let the locks settle
-            double now = history.waitForStill(3000, 0.5, 300);
-            if (Double.isNaN(now)) {
+            // A photo spin needs the table turning anyway, so it may already be going (started
+            // by hand, or left running): carry on from there rather than wait for it to stop.
+            double[] motion = history.waitForMotion(3000);
+            if (motion == null) {
                 throw new MoveFailedException(MoveFailedException.Reason.RING_LOST, "ring not readable before the spin");
             }
-            double front = Double.isNaN(o.frontRingDeg) ? now : o.frontRingDeg;
+            boolean alreadyTurning = Math.abs(motion[1]) > RingHistory.MIN_RATE;
+            // Without Set front, the front is wherever the badge faces now (as Capture was pressed).
+            double front = Double.isNaN(o.frontRingDeg) ? motion[0] : o.frontRingDeg;
 
             // 1. Get the table turning, slowly.
             if (drive) {
-                l.onStatus("Starting the turntable…");
-                table.start();
+                if (!alreadyTurning || !table.startToggles()) {
+                    // Turn right also makes sure it's turning continuously, one known way.
+                    l.onStatus(alreadyTurning ? "Already turning: setting it going one way…" : "Starting the turntable…");
+                    table.start();
+                } else {
+                    l.onStatus("Already turning…");  // Start/Stop would stop it
+                }
             } else {
-                l.onStatus("Start the turntable (slowest speed is sharpest)");
+                l.onStatus(alreadyTurning ? "Already turning…" : "Start the turntable (slowest speed is sharpest)");
             }
             turning[0] = true;
             double rate = history.waitForSteadyRotation(1500, drive ? 8000 : 120_000);
@@ -426,7 +411,7 @@ public final class CaptureSequencer {
                     l.onStatus("Speeding up for the video…");
                     table.setSpeed(o.videoSecondsPerRev);
                 }
-                return recordSpin(t, o, l, drive, true, stopTurning);
+                return recordSpin(t, o, l, true, stopTurning);
             }
             return true;
         } finally {
@@ -535,14 +520,13 @@ public final class CaptureSequencer {
     }
 
     /**
-     * Records the spin video. turning: the table is already spinning (spin mode), so this
-     * just records 360 deg plus the overlap; otherwise it starts the table (drive) or asks
-     * the user to. afterRecording runs once the recording stops (to stop the table before
-     * encoding).
-     * @return false if the user stopped it
+     * Records the spin video. turning: the table is already spinning (moving shots), so this
+     * just records 360 deg plus the overlap. Otherwise it records until the user presses
+     * Stop, having turned the table (or the badge) once round. afterRecording runs once the
+     * recording stops (to stop the table before encoding).
+     * @return false if the user discarded it
      */
-    private boolean recordSpin(CaptureTarget t, Options o, Listener l, boolean drive, boolean turning,
-                               Runnable afterRecording)
+    private boolean recordSpin(CaptureTarget t, Options o, Listener l, boolean turning, Runnable afterRecording)
             throws Exception {
         String prefix = Slugs.setPrefix(o.setLabel);
         if (!turning) l.onStep(videoStep(o), stepCount(o), "Recording the spin…");
@@ -562,13 +546,10 @@ public final class CaptureSequencer {
         try {
             if (turning) {
                 waitForTurn(log, o);
-            } else if (drive) {
-                table.start();
-                waitForTurn(log, o);
-                table.stop();
             } else {
-                keep = l.awaitManualPosition("spin", null,
-                        "Spin the table, then tap Ready after a full turn", Double.NaN);
+                String ask = "Recording: turn the table (or the badge) once round, then press Stop";
+                l.onStatus(ask);
+                keep = l.awaitSpinRecorded(ask);
             }
         } finally {
             boolean interrupted = clearInterrupt();

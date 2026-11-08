@@ -39,6 +39,11 @@ public final class Job {
             this.extra = extra == null ? new JSONObject() : extra;
         }
 
+        /** A string field of the prompt's details ("view", "stage"…), or null. */
+        public String detail(String key) {
+            return extra.isNull(key) ? null : extra.optString(key, null);
+        }
+
         public JSONObject toJson() {
             JSONObject o = Json.copy(extra);
             Json.put(o, "id", id);

@@ -40,9 +40,7 @@ public final class Calibrator {
 
         status.accept("Checking the encoder ring…");
         double start = table.waitForStable(3000, 0.5, 300);
-        if (Double.isNaN(start)) {
-            throw new MoveFailedException(MoveFailedException.Reason.RING_LOST, "ring not visible");
-        }
+        if (Double.isNaN(start)) throw table.notSettled("before calibrating");
 
         // 1. Spin one full turn: speed, direction, start latency.
         status.accept("Spinning one full turn…");
@@ -88,7 +86,7 @@ public final class Calibrator {
             double before = table.waitForStable(3000, 0.5, 300);
             if (Double.isNaN(before)) {
                 // Pressing a step while the table is still turning measures nothing useful.
-                throw new MoveFailedException(MoveFailedException.Reason.RING_LOST, "table not still before the step test");
+                throw table.notSettled("before the step test");
             }
             table.press(Role.STEP_90);
             if (waitForMovement(before, 2000) < 0) {
@@ -116,7 +114,7 @@ public final class Calibrator {
         // Set Origin only once the table is really at zero, or its own homing would be off.
         double now = table.waitForStable(3000, 0.5, 300);
         for (int attempt = 1; ; attempt++) {
-            if (Double.isNaN(now)) throw new MoveFailedException(MoveFailedException.Reason.RING_LOST, "ring lost while homing");
+            if (Double.isNaN(now)) throw table.notSettled("while homing");
             double off = RingReading.delta(zeroDeg, now);
             Log.i(TAG, String.format("homing attempt %d: at %.2f (%.2f from zero)", attempt, now, off));
             if (Math.abs(off) <= ZERO_TOL_DEG) break;

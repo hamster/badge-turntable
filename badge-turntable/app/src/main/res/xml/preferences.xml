@@ -31,13 +31,6 @@
 
     <PreferenceCategory app:title="@string/cat_capture">
         <ListPreference
-            app:key="capture_method"
-            app:title="@string/capture_method"
-            app:entries="@array/capture_method_names"
-            app:entryValues="@array/capture_method_values"
-            app:defaultValue="spin"
-            app:useSimpleSummaryProvider="true" />
-        <ListPreference
             app:key="spin_photo_spr"
             app:title="@string/spin_photo_speed"
             app:entries="@array/spin_speed_names"

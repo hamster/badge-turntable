@@ -186,13 +186,32 @@ public final class TurntableController {
     }
 
     /**
+     * Why {@link #waitForStable} gave up: TURNING if the ring is read fine (the table just
+     * didn't come to rest), RING_LOST if it isn't. Saying "can't see the ring" about a table
+     * that's merely turning sent people looking for something blocking the ring.
+     */
+    public MoveFailedException notSettled(String what) {
+        boolean seen = ring.get().ok();
+        return new MoveFailedException(seen ? MoveFailedException.Reason.TURNING : MoveFailedException.Reason.RING_LOST,
+                what + (seen ? ": still turning" : ": ring not readable"));
+    }
+
+    /**
+     * Whether {@link #start()} is the Start/Stop toggle (the remote has no Turn right), which
+     * would stop a table that's already turning rather than start it.
+     */
+    public boolean startToggles() {
+        return !profile.has(Role.TURN_RIGHT);
+    }
+
+    /**
      * Turns the table forward by about {@code degrees} and returns the settled angle.
      * Uses a step button when one matches, otherwise continuous rotation stopped early
      * by the calibrated overshoot.
      */
     public double moveBy(double degrees) throws MoveFailedException, InterruptedException {
         double start = waitForStable(3000, 0.5, 300);
-        if (Double.isNaN(start)) throw new MoveFailedException(MoveFailedException.Reason.RING_LOST, "ring not readable before move");
+        if (Double.isNaN(start)) throw notSettled("before the move");
 
         Role step = profile.stepFor((int) Math.round(degrees));
         for (int attempt = 0; attempt < 2; attempt++) {
@@ -204,7 +223,7 @@ public final class TurntableController {
             if (awaitMovement(start)) {
                 if (step == null) stopAfter(start, degrees - cal.stopOvershootDeg);
                 double end = waitForStable(timeForMs(degrees) + 5000, 0.5, 300);
-                if (Double.isNaN(end)) throw new MoveFailedException(MoveFailedException.Reason.RING_LOST, "ring lost during move");
+                if (Double.isNaN(end)) throw notSettled("after the move");
                 Log.i(TAG, String.format("moveBy %.2f from %.2f (%s): ended at %.2f, travelled %.2f",
                         degrees, start, step != null ? step : "continuous", end, cal.forward(start, end)));
                 return end;
@@ -222,7 +241,7 @@ public final class TurntableController {
      */
     public double home() throws MoveFailedException, InterruptedException {
         double now = waitForStable(3000, 0.5, 300);
-        if (Double.isNaN(now)) throw new MoveFailedException(MoveFailedException.Reason.RING_LOST, "ring not readable");
+        if (Double.isNaN(now)) throw notSettled("before homing");
         if (atZero(now)) return now;
 
         if (profile.has(Role.RETURN_TO_ORIGIN)) {
@@ -231,7 +250,7 @@ public final class TurntableController {
             double end = waitForStable(timeForMs(360) + 5000, 0.5, 300);
             if (!Double.isNaN(end) && atZero(end)) return end;
             now = waitForStable(3000, 0.5, 300);
-            if (Double.isNaN(now)) throw new MoveFailedException(MoveFailedException.Reason.RING_LOST, "ring lost while homing");
+            if (Double.isNaN(now)) throw notSettled("while homing");
         }
 
         double togo = cal.forward(now, cal.zeroAngleDeg);
