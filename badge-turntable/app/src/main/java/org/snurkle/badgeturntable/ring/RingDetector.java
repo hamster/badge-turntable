@@ -42,6 +42,23 @@ public final class RingDetector implements ImageAnalysis.Analyzer {
 
     private static final String TAG = "RingDetector";
 
+    /**
+     * Where the ring should sit, as fractions of the upright frame. The Capture screen draws
+     * this box, and markers are only searched for in it (plus SEARCH_MARGIN): about a quarter
+     * of the frame, so detection takes about a quarter of the time.
+     */
+    public static final float ZONE_LEFT = 0.12f, ZONE_TOP = 0.72f, ZONE_RIGHT = 0.88f, ZONE_BOTTOM = 1.0f;
+    /** How far (fraction of the frame) beyond the zone markers are still searched for. */
+    static final float SEARCH_MARGIN = 0.05f;
+    /**
+     * While the zone holds too few markers to fit, the whole frame is scanned this often, so
+     * the Capture screen can still show a ring that's outside the box ("move it into the box").
+     */
+    static final long FULL_SCAN_EVERY_NS = 500_000_000L;
+    // Analyzer thread only.
+    private int lastFound;
+    private long lastFullScanNs;
+
     private final ArucoDetector detector;
     private volatile RingConfig config;
     private volatile RingReading latest = RingReading.none(0);
@@ -74,6 +91,12 @@ public final class RingDetector implements ImageAnalysis.Analyzer {
         // Tried for the dim bench (Nov 5): CLAHE before detection, more threshold window sizes
         // and a lower threshold constant. None helped clearly enough to pay for the time (up to
         // 150 ms a frame against 30-50): the limit there was light, not the detector.
+        // Nov 7, black band under room light (15 frames from the phone, replayed offline): the
+        // default constant 7 thresholded most tiles away, 2.3 markers a frame, never 8. At 2,
+        // 11 a frame, every frame 8+, and no misread ids. 1 found a little more at twice the time.
+        params.set_adaptiveThreshConstant(2);
+        // ArUco3's faster candidate search: same markers there, about 25% less time.
+        params.set_useAruco3Detection(true);
         detector = new ArucoDetector(Objdetect.getPredefinedDictionary(Objdetect.DICT_4X4_50), params);
     }
 
@@ -110,16 +133,51 @@ public final class RingDetector implements ImageAnalysis.Analyzer {
     @Override
     public void analyze(@NonNull ImageProxy image) {
         try {
-            RingReading reading = read(image);
+            // A failed read is a frame with no reading, not a lost frame: listeners and the
+            // remote preview still get it, so a detector fault can't freeze the preview.
+            RingReading reading;
+            try {
+                reading = read(image);
+            } catch (RuntimeException e) {
+                warn("ring read failed", e);
+                reading = RingReading.none(image.getImageInfo().getTimestamp());
+            }
             latest = reading;
-            for (Listener l : listeners) l.onReading(reading);
+            for (Listener l : listeners) {
+                try {
+                    l.onReading(reading);
+                } catch (RuntimeException e) {
+                    warn("ring listener failed", e);
+                }
+            }
             FrameTap tap = frameTap;
-            if (tap != null) tap.onFrame(image, reading);
-        } catch (RuntimeException e) {
-            Log.w(TAG, "analysis failed", e);
+            if (tap != null) {
+                try {
+                    tap.onFrame(image, reading);
+                } catch (RuntimeException e) {
+                    warn("frame tap failed", e);
+                }
+            }
         } finally {
             image.close();
         }
+    }
+
+    // Analyzer thread only. A fault tends to repeat every frame, so log it at most every few seconds.
+    private static final long WARN_EVERY_NS = 5_000_000_000L;
+    private long lastWarnNs;
+    private int suppressedWarnings;
+
+    private void warn(String what, RuntimeException e) {
+        long now = System.nanoTime();
+        if (lastWarnNs != 0 && now - lastWarnNs < WARN_EVERY_NS) {
+            suppressedWarnings++;
+            return;
+        }
+        String more = suppressedWarnings > 0 ? " (" + suppressedWarnings + " more since the last report)" : "";
+        Log.w(TAG, what + more, e);
+        lastWarnNs = now;
+        suppressedWarnings = 0;
     }
 
     private RingReading read(ImageProxy image) {
@@ -130,29 +188,61 @@ public final class RingDetector implements ImageAnalysis.Analyzer {
         Mat gray = new Mat(image.getHeight(), image.getWidth(), CvType.CV_8UC1, buf, y.getRowStride());
         Mat upright = rotate(gray, image.getImageInfo().getRotationDegrees());
 
+        int frameW = upright.cols(), frameH = upright.rows();
+        // Search only the ring zone, unless the last frame couldn't fit and a full scan is due.
+        // (adb shell setprop log.tag.RingFullFrame VERBOSE turns the crop off, for comparison.)
+        boolean fullScan = (lastFound < 3 && startNs - lastFullScanNs >= FULL_SCAN_EVERY_NS)
+                || Log.isLoggable("RingFullFrame", Log.VERBOSE);
+        int ox = 0, oy = 0;
+        Mat search = upright;
+        if (fullScan) {
+            lastFullScanNs = startNs;
+        } else {
+            ox = clamp((int) ((ZONE_LEFT - SEARCH_MARGIN) * frameW), 0, frameW - 1);
+            oy = clamp((int) ((ZONE_TOP - SEARCH_MARGIN) * frameH), 0, frameH - 1);
+            int ex = clamp((int) Math.ceil((ZONE_RIGHT + SEARCH_MARGIN) * frameW), ox + 1, frameW);
+            int ey = clamp((int) Math.ceil((ZONE_BOTTOM + SEARCH_MARGIN) * frameH), oy + 1, frameH);
+            // Copied out of the frame, not used as a view: OpenCV 5.0's ArUco finds nothing in a
+            // non-continuous submat (4.x is fine). The copy is about 0.5 MB, well under a ms.
+            Mat view = upright.submat(oy, ey, ox, ex);
+            search = view.clone();
+            view.release();
+        }
+
         List<Mat> corners = new ArrayList<>();
         Mat ids = new Mat();
-        detector.detectMarkers(upright, corners, ids);
+        detector.detectMarkers(search, corners, ids);
+        if (search != upright) search.release();
 
         RingConfig cfg = config;
-        int frameW = upright.cols(), frameH = upright.rows();
+        // OpenCV 4 gave ids as an Nx1 column; OpenCV 5 gives a 1xN row (vectors became 1-D
+        // Mats), so ids.get(i, 0) is null for i > 0. Read both layouts by element count.
+        int[] idList = readInts(ids);
         List<double[]> detected = new ArrayList<>();  // {alpha, cx, cy, id, side}
-        for (int i = 0; i < corners.size(); i++) {
-            int id = (int) ids.get(i, 0)[0];
-            Mat c = corners.get(i);  // 1x4, CV_32FC2
-            double[][] p = new double[4][];
+        int nc = Math.min(corners.size(), idList.length);
+        if (nc != corners.size() || nc != idList.length) {
+            Log.w(TAG, corners.size() + " marker corner sets but " + idList.length + " ids; using " + nc);
+        }
+        for (int i = 0; i < nc; i++) {
+            int id = idList[i];
+            float[] p = readFloats(corners.get(i));  // 4 points, x,y interleaved
+            if (p.length != 8) continue;
             double cx = 0, cy = 0, side = 0;
             for (int k = 0; k < 4; k++) {
-                p[k] = c.get(0, k);
-                cx += p[k][0];
-                cy += p[k][1];
+                p[2 * k] += ox;  // back to whole-frame coordinates
+                p[2 * k + 1] += oy;
             }
-            for (int k = 0; k < 4; k++) side += Math.hypot(p[(k + 1) % 4][0] - p[k][0], p[(k + 1) % 4][1] - p[k][1]);
-            c.release();
+            for (int k = 0; k < 4; k++) {
+                cx += p[2 * k];
+                cy += p[2 * k + 1];
+                int n = (k + 1) % 4;
+                side += Math.hypot(p[2 * n] - p[2 * k], p[2 * n + 1] - p[2 * k + 1]);
+            }
             double alpha = cfg.angleOf(id);
             if (Double.isNaN(alpha)) continue;
             detected.add(new double[]{alpha, cx / 4, cy / 4, id, side / 4});
         }
+        for (Mat c : corners) c.release();
         ids.release();
         if (upright != gray) upright.release();
         gray.release();
@@ -171,6 +261,7 @@ public final class RingDetector implements ImageAnalysis.Analyzer {
         List<double[]> found = new ArrayList<>();
         List<double[]> ignored = new ArrayList<>();
         for (int i = 0; i < nd; i++) (keep[i] ? found : ignored).add(detected.get(i));
+        lastFound = found.size();
         int[] markerIds = new int[found.size()];
         float[] markerXY = new float[found.size() * 2];
         for (int i = 0; i < found.size(); i++) {
@@ -253,6 +344,51 @@ public final class RingDetector implements ImageAnalysis.Analyzer {
         }
         if (!haveGeometry) return full;
         return AngleFit.fitAngle(alpha, x, refX, refScale, refK, cfg.stepDeg());
+    }
+
+    /**
+     * All of an int Mat's elements in order, whatever its shape (Nx1, 1xN or 1-D). Detector
+     * outputs are continuous, so reshaping to a single-channel column is a free view.
+     */
+    static int[] readInts(Mat m) {
+        int n = (int) (m.total() * m.channels());
+        int[] out = new int[n];
+        if (n == 0) return out;
+        Mat src = m.isContinuous() ? m : m.clone();
+        Mat col = src.reshape(1, n);
+        if (col.depth() != CvType.CV_32S) {
+            Mat conv = new Mat();
+            col.convertTo(conv, CvType.CV_32S);
+            col.release();
+            col = conv;
+        }
+        col.get(0, 0, out);
+        col.release();
+        if (src != m) src.release();
+        return out;
+    }
+
+    /** All of a float Mat's channel values in order (x0, y0, x1, y1, ... for points), whatever its shape. */
+    static float[] readFloats(Mat m) {
+        int n = (int) (m.total() * m.channels());
+        float[] out = new float[n];
+        if (n == 0) return out;
+        Mat src = m.isContinuous() ? m : m.clone();
+        Mat col = src.reshape(1, n);
+        if (col.depth() != CvType.CV_32F) {
+            Mat conv = new Mat();
+            col.convertTo(conv, CvType.CV_32F);
+            col.release();
+            col = conv;
+        }
+        col.get(0, 0, out);
+        col.release();
+        if (src != m) src.release();
+        return out;
+    }
+
+    private static int clamp(int v, int lo, int hi) {
+        return Math.max(lo, Math.min(hi, v));
     }
 
     private static Mat rotate(Mat src, int degrees) {
