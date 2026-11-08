@@ -25,6 +25,7 @@ import org.snurkle.badgeturntable.session.SessionStore;
 import org.snurkle.badgeturntable.ring.RingDetector;
 import org.snurkle.badgeturntable.ring.RingReading;
 
+import java.io.File;
 import java.io.IOException;
 import java.net.Inet4Address;
 import java.net.InetAddress;
@@ -91,6 +92,8 @@ public final class RemoteServer {
     private final PreviewEncoder encoder = new PreviewEncoder();
     private ScheduledExecutorService timer;
     private HttpServer http;
+    /** The WebRTC transport, or null if it isn't running (Info and Pair then say webrtc: null). */
+    private volatile WebRtcTransport webrtc;
     private MdnsResponder mdns;
     private WifiManager.MulticastLock multicastLock;
     private long lastRingSentMs;
@@ -151,6 +154,8 @@ public final class RemoteServer {
             return;
         }
         error = null;
+        // After the HTTP server, which the bridge relays to over loopback.
+        webrtc = WebRtcTransport.start(addresses(), port, new File(context.getFilesDir(), "webrtc-cert.pem"));
         pairing.setCodeListener(code -> {
             broadcast(Json.obj("type", "notice", "level", "info", "text", "The pairing code on the phone changed."));
             notifyUi();
@@ -175,6 +180,11 @@ public final class RemoteServer {
         if (r != null) detachRig(r);
         pairing.setCodeListener(null);
         for (Client c : clients) c.ws.close(1001, "The phone stopped remote control");
+        // After the WebSockets: the bridge relays their 1001, and sends it itself on any live
+        // channel it hasn't reached yet, before closing the connections.
+        WebRtcTransport w = webrtc;
+        webrtc = null;
+        if (w != null) w.stop();
         if (mdns != null) mdns.stop();
         mdns = null;
         if (multicastLock != null && multicastLock.isHeld()) multicastLock.release();
@@ -257,7 +267,14 @@ public final class RemoteServer {
     JSONObject info(Boolean paired) {
         return Json.obj("api", API_VERSION, "app", "Badge Turntable", "appVersion", appVersion(),
                 "deviceId", deviceId, "name", name, "model", model(), "port", port,
-                "addresses", Json.arr(addresses()), "paired", paired, "busy", station.jobs.current() != null);
+                "addresses", Json.arr(addresses()), "paired", paired, "busy", station.jobs.current() != null,
+                "webrtc", webrtcJson());
+    }
+
+    /** {@code webrtc} in Info and Pair: the transport's UDP port and fingerprint, or null. */
+    Object webrtcJson() {
+        WebRtcTransport w = webrtc;
+        return w == null ? null : w.toJson();
     }
 
     JSONObject status() {

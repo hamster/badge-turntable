@@ -4,3 +4,8 @@ __pycache__/
 node_modules/
 # The mock phone's temporary spin videos
 .spin-*.mp4
+# The WebRTC bridge's certificates (made on first run) and desktop builds
+*-cert.pem
+badge-turntable/webrtc-bridge/webrtc-bridge
+badge-turntable/webrtc-bridge/*.exe
+badge-turntable/app/libs/*-sources.jar

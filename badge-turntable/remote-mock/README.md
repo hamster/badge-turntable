@@ -18,6 +18,17 @@ python mock_phone.py
 
 `--host 0.0.0.0` puts the mock on the LAN, so it can be tried from the published editor on GitHub Pages (which exercises Chrome's Local Network Access prompt).
 
+### With the WebRTC transport
+
+The mock speaks plain HTTP only. For the [WebRTC transport](../../Remote-API.md#webrtc-transport), run the desktop [WebRTC bridge](../webrtc-bridge/README.md) beside it, as the app runs the same bridge in front of its own server:
+
+```
+go run ../webrtc-bridge/cmd/webrtc-bridge -udp 8738 -upstream 127.0.0.1:8737 -cert mock-bridge-cert.pem
+python mock_phone.py
+```
+
+The bridge makes `mock-bridge-cert.pem` on its first run, and the mock reads it to put `webrtc` (the UDP port and the certificate's fingerprint) in Info and Pair. Without it, `webrtc` is `null` and the editor uses plain HTTP. Like the app, the mock marks responses to a request with a valid token with `X-Paired: true`, which is how the bridge knows a connection has authenticated.
+
 ## Options
 
 | Option | Effect |
@@ -33,6 +44,8 @@ python mock_phone.py
 | `--rotate 0` | Preview header rotation. The default, 1, sends frames turned on their side, to test that the editor rotates them back |
 | `--port`, `--editor-port`, `--name` | As named. `--editor-port 0` turns the editor server off |
 | `--site <path>` | The badges site checkout to serve the editor from (default: `badges` beside this repo) |
+| `--webrtc-cert <pem>` | The WebRTC bridge's certificate, for `webrtc` in Info and Pair (default: `mock-bridge-cert.pem` here) |
+| `--webrtc-port N` | The bridge's UDP port (default: `--port` + 1) |
 | `--verbose` | Log every request |
 
 ## Test controls

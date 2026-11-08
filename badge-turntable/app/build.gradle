@@ -54,6 +54,10 @@ dependencies {
     implementation libs.exifinterface
     implementation libs.opencv
 
+    // The Remote API's WebRTC transport: the Go bridge in ../webrtc-bridge, built with gomobile
+    // (see its README). Optional: without it the app runs with plain HTTP only.
+    implementation fileTree(dir: 'libs', include: ['*.aar'])
+
     // IR learning over a USB IR receiver (phase 7); also uncomment jitpack in settings.gradle
     // implementation 'com.github.mik3y:usb-serial-for-android:3.8.0'
 

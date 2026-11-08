@@ -33,6 +33,7 @@ import re
 import secrets
 import shutil
 import socket
+import ssl
 import struct
 import subprocess
 import sys
@@ -488,6 +489,7 @@ class Phone:
         self.device_id = hashlib.sha1(("mock-" + socket.gethostname()).encode()).hexdigest()[:16]
         self.name = args.name
         self.tokens = {}
+        self._webrtc_cache = None
         if args.token:
             self.tokens[args.token] = {"clientName": "preset", "pairedAt": now_iso()}
         self.fixed_code = args.code
@@ -567,7 +569,26 @@ class Phone:
         print("  Paired with %r" % name)
         if not self.fixed_code:
             self.rotate_code()
-        return {"token": token, "deviceId": self.device_id, "name": self.name}
+        return {"token": token, "deviceId": self.device_id, "name": self.name, "webrtc": self.webrtc()}
+
+    def webrtc(self):
+        """`webrtc` in Info and Pair: the desktop bridge's UDP port and its certificate's
+        fingerprint, worked out from the PEM it keeps; None until the bridge has made it."""
+        path = self.args.webrtc_cert
+        try:
+            mtime = os.path.getmtime(path)
+            if self._webrtc_cache and self._webrtc_cache[0] == mtime:
+                return self._webrtc_cache[1]
+            with open(path, encoding="ascii") as f:
+                m = re.search(r"-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----", f.read(), re.S)
+            der = ssl.PEM_cert_to_DER_cert(m.group(0))
+        except (OSError, AttributeError, ValueError):
+            return None
+        digest = hashlib.sha256(der).hexdigest().upper()
+        out = {"port": self.args.webrtc_port or self.args.port + 1,
+               "fingerprint": "sha-256 " + ":".join(digest[i:i + 2] for i in range(0, 64, 2))}
+        self._webrtc_cache = (mtime, out)
+        return out
 
     # -- readings -----------------------------------------------------------
 
@@ -642,7 +663,7 @@ class Phone:
         return {"api": API_VERSION, "app": "Badge Turntable", "appVersion": APP_VERSION, "deviceId": self.device_id,
                 "name": self.name, "model": "Mock phone (%s)" % socket.gethostname(), "port": self.args.port,
                 "addresses": local_addresses(), "paired": None if token is None else token in self.tokens,
-                "busy": self.job is not None}
+                "busy": self.job is not None, "webrtc": self.webrtc()}
 
     # -- broadcasting -------------------------------------------------------
 
@@ -1437,10 +1458,17 @@ class ApiHandler(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Expose-Headers", "Content-Disposition, X-Shot-Filename")
             self.send_header("Access-Control-Max-Age", "600")
 
+    def paired_header(self):
+        # For the WebRTC bridge: this request's token is valid (Remote-API.md, WebRTC transport).
+        tok = self.token()
+        if tok and any(secrets.compare_digest(tok, t) for t in list(PHONE.tokens)):
+            self.send_header("X-Paired", "true")
+
     def send_bytes(self, status, data, mime, extra=None, cors=True):
         self.send_response(status)
         if cors:
             self.cors()
+        self.paired_header()
         self.send_header("Content-Type", mime)
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
@@ -1455,6 +1483,7 @@ class ApiHandler(BaseHTTPRequestHandler):
             self.send_response(204)
             if cors:
                 self.cors()
+            self.paired_header()
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
@@ -1954,6 +1983,9 @@ def main():
     ap.add_argument("--rotate", type=int, default=1, help="preview header rotation, 0-3 (default 1, to test it)")
     ap.add_argument("--sessions", type=int, default=0, help="start with N sessions on the phone, the last one open")
     ap.add_argument("--camera-closed", action="store_true", help="start off the Camera screen (camera endpoints 503)")
+    ap.add_argument("--webrtc-cert", default=os.path.join(HERE, "mock-bridge-cert.pem"),
+                    help="the desktop WebRTC bridge's certificate, for webrtc in Info and Pair (default: %(default)s)")
+    ap.add_argument("--webrtc-port", type=int, default=0, help="the bridge's UDP port (default: --port + 1)")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
     if args.code and not re.fullmatch(r"\d{6}", args.code):

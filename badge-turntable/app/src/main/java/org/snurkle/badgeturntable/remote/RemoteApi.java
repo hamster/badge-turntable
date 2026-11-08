@@ -70,6 +70,10 @@ final class RemoteApi implements HttpServer.Handler {
             }
         }
         if (resp.upgrade != null) return resp;
+        // For the WebRTC bridge, which doesn't know the tokens: this request's token is valid,
+        // so its connection counts as authenticated. It isn't passed on to the editor.
+        String token = token(req);
+        if (token != null && server.pairing.check(token) != null) resp.header("X-Paired", "true");
         if (origin != null) {
             resp.header("Access-Control-Allow-Origin", origin)
                     .header("Vary", "Origin")
@@ -100,7 +104,9 @@ final class RemoteApi implements HttpServer.Handler {
         if (path.equals("/api/pair")) {
             if (m.equals("POST")) {
                 String token = server.pairing.pair(body.optString("code"), body.optString("clientName"));
-                return ok(Json.obj("token", token, "deviceId", server.deviceId, "name", server.name));
+                // The editor pins webrtc.fingerprint from here, not from the unauthenticated Info.
+                return ok(Json.obj("token", token, "deviceId", server.deviceId, "name", server.name,
+                        "webrtc", server.webrtcJson()));
             }
             if (m.equals("DELETE")) {
                 server.pairing.forget(requireAuth(req));

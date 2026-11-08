@@ -30,6 +30,7 @@ Typing on a phone clamped in a tripod is awkward, so the app can also be driven 
 | Video post-processing | Media3 Transformer | Trim, scale, speed change and H.264 re-encode in Java. |
 | IR learning (optional) | usb-serial-for-android | Reads raw timings from a USB IR receiver (see [Turntable profiles](#turntable-profiles)). |
 | Remote control server | Built in (`remote.HttpServer`, `remote.WebSocket`), `java.net` only | About 600 lines: HTTP/1.1 with keep-alive and the WebSocket upgrade, unit tested on the JVM. NanoHTTPD was the plan, but its WebSocket close codes are a fixed enum, so it can't send the API's 4401/4408/4409, and it has been unmaintained since 2016. |
+| Remote control over WebRTC | [Pion](https://github.com/pion/webrtc) (Go), built into an AAR with gomobile ([webrtc-bridge](badge-turntable/webrtc-bridge/README.md)) | A small bridge that relays the editor's data channels to the app's own HTTP server on loopback, so the API code is the same for both transports. About 4 MB (arm64 only). Chosen over Google's libwebrtc, which is far larger and isn't made to run as an ICE-lite endpoint without signalling. |
 | Local name | Built in (`remote.MdnsResponder`) | A minimal mDNS responder: answers A queries for `badge-turntable.local` and advertises an `_badge-turntable._tcp` service with SRV and TXT records. It doesn't probe for name conflicts. Needs a Wi-Fi `MulticastLock` while running. Chosen over JmDNS to avoid a dependency that also pulls in SLF4J. |
 
 ### Target phone: OnePlus 13
@@ -408,7 +409,8 @@ The API runs a camera and an IR blaster, so it's not open to anyone on the netwo
 - **Pairing.** The phone's remote-control banner (on every screen) shows a 6-digit code, and the user types it into the editor. `POST /api/pair` swaps the code for a random 128-bit token, which the editor keeps in `localStorage` for that phone. Codes expire after 2 minutes, and five wrong guesses lock pairing for a minute. The phone stores only SHA-256 hashes of the tokens. **Settings → Remote control** lists paired PCs and can revoke them.
 - **Every request** carries `Authorization: Bearer <token>`, except `/api/info` and `/api/pair`. Browsers can't set headers on a WebSocket, so its first message must be `{"type": "auth", "token": …}`, and the phone closes the socket if it isn't.
 - **Origins.** The phone accepts calls from any origin. CORS only restrains browsers anyway, so the pairing code (shown only on the phone) and the token are what keep other pages and clients out. An allow-list of editor origins only got in the way, for example with a local copy of the editor.
-- **Plain HTTP.** Traffic, including the token, is unencrypted on the LAN. That's acceptable on a home network, and the token can be revoked. If it isn't acceptable, HTTPS would need a certificate the browser trusts for a LAN address, which is a lot of setup for little gain.
+- **Encrypted after pairing.** Once paired, the editor reaches the phone over **WebRTC data channels** ([Remote-API.md § WebRTC transport](Remote-API.md#webrtc-transport)), not plain HTTP. They're encrypted with DTLS, and the browser checks the phone's self-signed certificate against the fingerprint it pinned at pairing, so the token, photos and preview can't be read or altered by others on the network, and the editor's https page isn't flagged as **Not secure** for mixed content. HTTPS on the phone wouldn't have done this without a certificate the browser trusts for a LAN address, which is a lot of setup. There's no signalling server: the phone runs ICE-lite on one UDP port (the HTTP port + 1), and the editor writes both sides' descriptions.
+- **Plain HTTP stays** for finding phones, pairing (`GET /api/info`, `POST /api/pair`), older editors and curl. The page load where the user pairs shows Not secure; later ones don't. The token still crosses the network in the clear when pairing and on plain-HTTP calls, which is acceptable on a home network, and it can be revoked.
 
 ### On the phone
 
@@ -447,7 +449,7 @@ The phone has one camera and one turntable, but two people may want them: someon
 
 The full contract, with every request and response, the error codes, jobs and prompts, shot naming and the WebSocket and preview-frame formats, is in **[Remote-API.md](Remote-API.md)**. A mock phone that implements it, used to build and test the editor panel, is in [badge-turntable/remote-mock/](badge-turntable/remote-mock/README.md). In short:
 
-- JSON over HTTP at `http://<phone>:8737/api/`, with `Authorization: Bearer <token>` on everything except `GET /info` and `POST /pair`.
+- JSON over HTTP at `http://<phone>:8737/api/`, with `Authorization: Bearer <token>` on everything except `GET /info` and `POST /pair`. After pairing, the same requests and the live stream go over WebRTC data channels ([WebRTC transport](Remote-API.md#webrtc-transport)).
 - `GET /status` and `GET`/`POST /camera` read and set state. `POST /turntable/press` sends one IR code.
 - Calibration, captures, extra shots and closed-loop moves are **jobs** (`202 {job}`), one at a time. A job raises **prompts** (move failed, turn the table by hand), and the first answer from the phone or any editor tab wins.
 - `GET /shots` lists what the phone holds for the editor, in the standard order with standard names and captions. `GET /shots/{id}` downloads the web copy or a thumbnail.

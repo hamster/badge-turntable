@@ -1,14 +1,15 @@
 # Badge Turntable — Remote API
 
-API version **1** · Nov 7, 2026 (adds [Sessions](#sessions), the shared [capture target](#capture-target), `POST /api/camera/open`, the server on every screen, job `source`, `target` and `stoppedBy`, and web copies only). This is the contract between the Badge Turntable app (the server, on the phone) and the web editor's Turntable panel ([edit/turntable.js](https://github.com/hamster/badges/blob/main/edit/turntable.js) in the badges repo, the client). The background, the security reasoning and the user-facing behaviour are in [Spec.md § Remote control from the editor](Spec.md#remote-control-from-the-editor). Where the two disagree about the wire format, this document wins.
+API version **1** · Nov 8, 2026 (adds the [WebRTC transport](#webrtc-transport), and `webrtc` in `GET /api/info` and `POST /api/pair`; Nov 7 added [Sessions](#sessions), the shared [capture target](#capture-target), `POST /api/camera/open`, the server on every screen, job `source`, `target` and `stoppedBy`, and web copies only). This is the contract between the Badge Turntable app (the server, on the phone) and the web editor's Turntable panel ([edit/turntable.js](https://github.com/hamster/badges/blob/main/edit/turntable.js) in the badges repo, the client). The background, the security reasoning and the user-facing behaviour are in [Spec.md § Remote control from the editor](Spec.md#remote-control-from-the-editor). Where the two disagree about the wire format, this document wins.
 
 A mock phone that implements all of it is in [badge-turntable/remote-mock/](badge-turntable/remote-mock/README.md). It's the reference when this text is unclear, and the editor panel is tested against it.
 
-Contents: [Conventions](#conventions) · [Errors](#errors) · [CORS](#cors) · [Pairing and tokens](#pairing-and-tokens) · [Endpoints](#endpoints) · [Jobs](#jobs) · [Shots](#shots) · [Sessions](#sessions) · [WebSocket `/api/live`](#websocket-apilive) · [Discovery](#discovery) · [Implementation notes for the app](#implementation-notes-for-the-app)
+Contents: [Conventions](#conventions) · [Errors](#errors) · [CORS](#cors) · [Pairing and tokens](#pairing-and-tokens) · [Endpoints](#endpoints) · [Jobs](#jobs) · [Shots](#shots) · [Sessions](#sessions) · [WebSocket `/api/live`](#websocket-apilive) · [WebRTC transport](#webrtc-transport) · [Discovery](#discovery) · [Implementation notes for the app](#implementation-notes-for-the-app)
 
 ## Conventions
 
 - **Base URL:** `http://<host>:8737/api/`. The port is set in **Settings → Remote control**. `<host>` is the mDNS name (`badge-turntable.local`) or the Wi-Fi IP address.
+- **WebRTC:** after pairing, the editor reaches the same endpoints and the live stream over WebRTC data channels instead (see [WebRTC transport](#webrtc-transport)), so its https page isn't flagged for mixed content, and the token, photos and preview are encrypted. HTTP stays for `GET /api/info`, `POST /api/pair`, discovery, older editors and curl.
 - **Bodies** are JSON (`Content-Type: application/json; charset=utf-8`), both ways. Request bodies are small (under 16 KB). Unknown fields in a request are ignored. Clients must ignore unknown fields in a response, so new fields can be added without a version bump.
 - **Names** in JSON are `camelCase`. Enum values are `lower_snake_case` strings. A turntable role is `TurntableProfile.Role.name().toLowerCase()`, so `STEP_90` is `"step_90"`.
 - **Times** are ISO 8601 UTC strings with milliseconds (`"2026-11-04T18:22:05.120Z"`). Frame times, which come from the camera clock, are integer **microseconds** (`frameUs`), so they stay exact in a JavaScript number.
@@ -44,6 +45,7 @@ Every error is an HTTP status with this body:
 | 422 | `unsupported` | The phone or the profile can't do it: a role the remote doesn't have, a camera setting the lens doesn't offer, no IR blaster | `field` |
 | 429 | `pairing_locked` | Five wrong codes in a row | `retryAfterMs` |
 | 500 | `internal` | Anything unexpected. `message` carries the exception text | |
+| 502 | `bad_gateway` | WebRTC only: the phone's bridge couldn't reach the app's API | |
 | 503 | `camera_unavailable` | The camera isn't open: the phone isn't on its Capture screen ("Open the Camera screen on the phone"), the camera is still starting, or another app has it | |
 | 507 | `storage_low` | Less than 500 MB free, so a capture won't start | `freeBytes` |
 
@@ -122,7 +124,8 @@ The server runs while the app is in the foreground, on any screen. Endpoints mar
   "port": 8737,
   "addresses": ["192.168.10.23"],
   "paired": true,
-  "busy": false
+  "busy": false,
+  "webrtc": { "port": 8738, "fingerprint": "sha-256 11:AA:7F:…:6C:94" }
 }
 ```
 
@@ -131,12 +134,19 @@ The server runs while the app is in the foreground, on any screen. Endpoints mar
 - `addresses` are the phone's current IPv4 addresses on Wi-Fi. The editor remembers them as a fallback.
 - `paired` is `true` if the request carried a valid token, `false` if it carried one that isn't valid, and `null` if it carried none. It's how the editor notices a revoked token without a 401.
 - `busy` is `true` while a job runs.
+- `webrtc` is the [WebRTC transport](#webrtc-transport), or `null` when the phone has none or it couldn't start (no Wi-Fi address, or an app built without it):
+  - `port`: its UDP port, always the HTTP port + 1 (8738 by default). It has no setting of its own.
+  - `fingerprint`: the SHA-256 of the phone's WebRTC certificate (DER), as 32 upper-case hex bytes separated by colons, after `sha-256 `. It changes only when the certificate is remade: the app's data was cleared, which also loses the tokens.
+  - The editor doesn't trust the fingerprint from here: Info is unauthenticated plain HTTP that anyone on the network could alter. It pins the one from [Pair](#post-apipair).
 
 ### `POST /api/pair`
 
 Request: `{"code": "482913", "clientName": "Edge on HAMSTER-PC"}`. `clientName` is up to 64 characters, shown in Paired PCs and in the phone's "Controlled from …" banner.
 
-Response: `{"token": "9b2e…(32 hex)", "deviceId": "6f1c0b9e2a7d4c35", "name": "badge-turntable"}`.
+Response: `{"token": "9b2e…(32 hex)", "deviceId": "6f1c0b9e2a7d4c35", "name": "badge-turntable", "webrtc": {"port": 8738, "fingerprint": "sha-256 11:AA:…"}}`.
+
+- `webrtc` is as in [Info](#get-apiinfo). **The editor pins this fingerprint** with the token, and doesn't take a different one from a later Info. A changed fingerprint means pairing again.
+- **Noticing a changed key:** WebRTC to a phone with a changed certificate fails without saying why (JavaScript only sees the connection fail). If WebRTC fails but `GET /api/info` over HTTP, with the token, says `paired: true` and gives a different `webrtc.fingerprint`, the editor says "The phone's key changed. Pair again." rather than retrying.
 
 Errors: `400 bad_request` (code isn't 6 digits), `401 bad_code` with `attemptsLeft`, `429 pairing_locked` with `retryAfterMs`.
 
@@ -658,17 +668,117 @@ Each binary message is one preview frame: a 16-byte header, then a complete JPEG
 
 Unknown messages are ignored.
 
+## WebRTC transport
+
+The same API over WebRTC data channels, so the editor's https page doesn't load anything over plain HTTP and keeps its padlock. Data channels are encrypted with DTLS, and the browser checks the phone's certificate against the fingerprint in the SDP rather than trusting a CA, so a self-signed certificate is fine. WebRTC isn't mixed content, and Local Network Access doesn't block it. There's no signalling server: the phone is the ICE-lite, DTLS-server end, and the editor writes both descriptions.
+
+### Connecting
+
+The editor needs the phone's `webrtc.port` and `webrtc.fingerprint` (pinned at pairing), its name and its last addresses.
+
+1. The editor makes a random **ICE ufrag of 32 lower-case hex characters** (16 random bytes). **The ICE password is the same string.**
+2. It creates an `RTCPeerConnection` (no ICE servers), opens the `live` data channel (so the offer has an application section), and sets its own offer unchanged.
+3. It sets this as the remote answer (CRLF line endings), with a candidate for `<name>.local` and one for each of the phone's last known `addresses`, priorities counting down:
+
+```
+v=0
+o=- 1 1 IN IP4 0.0.0.0
+s=-
+t=0 0
+a=group:BUNDLE 0
+a=ice-lite
+m=application <port> UDP/DTLS/SCTP webrtc-datachannel
+c=IN IP4 0.0.0.0
+a=mid:0
+a=ice-ufrag:<ufrag>
+a=ice-pwd:<ufrag>
+a=fingerprint:sha-256 <fingerprint, upper-case hex with colons>
+a=setup:passive
+a=sctp-port:5000
+a=max-message-size:262144
+a=candidate:1 1 udp 2130706431 <name>.local <port> typ host
+a=candidate:2 1 udp 2130706430 <address 1> <port> typ host
+a=end-of-candidates
+```
+
+4. The browser, as the full ICE agent and the controlling side, sends STUN checks to the candidates. Their `USERNAME` is `<ufrag>:<browser ufrag>`, signed with `<ufrag>` as the password.
+5. The phone answers a check for a new ufrag by making a connection for it (see [the phone's side](#the-phones-side)). The browser then completes DTLS as the client, checks the phone's certificate against the fingerprint, and opens its channels.
+
+If `live` hasn't opened within 5 s, the editor gives up on WebRTC for that attempt.
+
+### The phone's side
+
+- **Where:** ICE-lite on one UDP port (`webrtc.port`), on the phone's Wi-Fi IPv4 addresses only, shared by every connection. Not on mobile data, just as the HTTP server only accepts connections on the LAN. No ICE servers, no TCP candidates, no IPv6, and no mDNS of its own (the app's responder answers for `<name>.local`).
+- **Who it accepts:** a STUN binding request whose local ufrag (the part before `:`) matches `^[0-9a-f]{32}$` and isn't already in use, and whose remote ufrag (after `:`) is 4 to 256 ICE characters (`A–Z a–z 0–9 + /`), starts a connection. Its ICE ufrag and password are both that ufrag. Other checks are ignored.
+- **DTLS:** the phone is the DTLS server (`setup:passive`) with its fixed certificate. It does **not** check the browser's certificate: the token is what authenticates the editor.
+- **Authenticated:** a connection is authenticated once the app has accepted a token on it: a `req` whose token was valid, or `hello` on its `live` channel. `GET /api/info` without a token, or with a bad one, doesn't count.
+- **Limits:**
+  - At most **8 connections that aren't authenticated** (being set up, or connected without a valid token yet). Checks for new ufrags beyond that are ignored.
+  - A connection must be **authenticated within 10 s** of its first check, or it's closed. That covers one that never connects, never opens a channel, or holds a channel open without a token, so strangers on the network can't hold slots.
+  - At most **4 authenticated connections**, as for WebSockets. One that authenticates when 4 others are is closed, and its `live` channel gets `close` with `4409` first.
+- **Liveness:** ICE consent checks from the browser keep a connection up. With none for 5 s it's disconnected, and after 10 s it's closed.
+- **Stopping:** when the server stops (app backgrounded, remote control off), the app first closes its WebSockets with `1001`, which the bridge relays. Then the bridge sends `{"type": "close", "code": 1001, "reason": "…"}` on any `live` channel that hasn't had one, and closes every connection.
+
+### Channels
+
+The editor opens every channel: ordered and reliable, with the defaults. The phone tells them apart by label, and closes a channel with any other label.
+
+#### `req`: one request each
+
+The first and only message from the editor is text:
+
+```json
+{ "method": "GET", "path": "/api/shots/s-12?variant=thumb", "token": "9b2e…", "body": null }
+```
+
+- `method` is `GET`, `POST` or `DELETE`. Anything else gets `405 method_not_allowed`.
+- `path` is the HTTP path with its query string, percent-encoded as in a URL. It must start with `/api/`, with no `.` or `..` segments, spaces, control characters, `\` or `#`; otherwise `400 bad_request`. Only the path and query come from the editor: the phone always sends the request to its own API.
+- `token` is the pairing token, or `null` for endpoints without auth. The phone treats it as `Authorization: Bearer <token>`.
+- `body` is the JSON request body, or `null`. It's under 16 KB, as over HTTP.
+- A channel with no request within 10 s is closed.
+
+The phone answers with one text message, then the body, then an end marker, and closes the channel once they've gone:
+
+```json
+{ "type": "head", "status": 200, "headers": { "content-type": "image/jpeg", "content-length": "48213", "x-shot-filename": "front.jpg", "content-disposition": "attachment; filename=\"front.jpg\"" } }
+```
+
+- **Body:** binary messages of up to 64 KiB each, exactly as the HTTP body: the JSON for JSON responses, and the file for files. A `204` has none.
+- **End:** `{"type": "end", "bytes": 48213}`, the number of body bytes sent.
+- **Cut short:** if the app's response ends early, the phone closes the channel without `end`. The editor treats a channel that closes without `end`, or an `end.bytes` that isn't `content-length`, as a failed request.
+- **Errors** are a `head` with the HTTP status and the usual [error body](#errors) as the body, then `end`. Errors from the bridge itself are `400 bad_request`, `405 method_not_allowed` and `502 bad_gateway` (it couldn't reach the app).
+- **Header names** are lower case. Only these are passed: `content-type`, `content-length`, `content-disposition`, `x-shot-filename`.
+- **Cancelling:** if the editor closes the channel before `end`, the phone stops the request and stops sending.
+- **Flow control:** the phone stops sending while more than 1 MB is buffered on the channel, and resumes when it drops below 256 KB.
+- **How many at once:** the editor keeps at most **6 `req` channels open** at once (as a browser does for HTTP/1.1), and queues the rest. The phone relays at most 8 requests at once and holds the others back.
+
+#### `live`: the live stream
+
+Exactly the [WebSocket `/api/live`](#websocket-apilive) protocol, message for message: text for text, binary preview frames for binary. That includes the `auth` message first, `hello`, `status` every 500 ms, and the editor's `preview` messages.
+
+- **Opening:** the phone opens its side when the channel opens, so the 5 s auth timeout (`4408`) applies as on the WebSocket.
+- **Closing:** a data channel has no close codes, so before closing it the phone sends `{"type": "close", "code": <code>, "reason": "…"}`. The codes are the WebSocket's (`4401`, `4408`, `4409`, `1001`), plus `1011` when the bridge couldn't reach the app, and `1006` when the app's side dropped without a close. The editor closes its `RTCPeerConnection` on a `close` message (the browser can still say `connected` for a few seconds after the phone has gone), and reconnects as it would after the same WebSocket code.
+- **Preview frames:** each must fit in one message, at most 256 KiB, or it's skipped. If the channel already has more than 256 KB buffered when a frame arrives, the frame is dropped (the WebSocket rule of at most one waiting frame). Text messages are never dropped.
+
+### Security
+
+- **The browser authenticates the phone** by the fingerprint pinned at pairing. Pairing itself is over HTTP, as before, so the first contact is trusted the same way it is today.
+- **The phone authenticates the editor** by the token, in every `req` and in the `live` channel's `auth` message. Anyone on the network can complete a DTLS handshake, but without a token they get `401`, as over HTTP, and the connection is closed within 10 s.
+- **The ICE password is the ufrag**, which crosses the network in the clear, so the STUN checks' integrity protects nothing. That's deliberate: there's no signalling channel to carry a secret password, and DTLS with the pinned fingerprint protects everything that matters. Someone on the network could disrupt a connection, as they could disrupt Wi-Fi.
+- **Everything after pairing is encrypted:** the token, the photos, the preview.
+
 ## Discovery
 
 - **mDNS host:** the app's mDNS responder answers A queries for `<name>.local` (default `badge-turntable`).
 - **mDNS service:** `_badge-turntable._tcp.local.` on the server port, with TXT records `api=1`, `id=<deviceId>`, `path=/api/`. The editor can't browse it (web pages can't do mDNS), but other tools can.
 - **The editor probes** `GET /api/info` on `badge-turntable.local:8737`, on each remembered device's name and last IP address, and on any address the user added, all at once, with a 1.5 s timeout each. Phones that answer are listed, and results with the same `deviceId` are merged.
+- **A paired phone is reached over WebRTC first,** with `<name>.local` and its last known addresses as candidates, and without probing HTTP. The editor falls back to probing `GET /api/info` over HTTP only if WebRTC doesn't connect within 5 s (an older app, a phone with `webrtc: null`, or a [changed key](#post-apipair)), or when the user asks to find phones.
 
 ## Implementation notes for the app
 
 These aren't part of the wire format, but they're what the editor expects. They're implemented in the app's `remote`, `jobs` and `rig` packages.
 
-- **Server lifetime:** start the server, mDNS and the Wi-Fi `MulticastLock` when the app comes to the foreground with remote control on, and stop them when it goes to the background: `ProcessLifecycleOwner` (`androidx.lifecycle:lifecycle-process`) `ON_START` and `ON_STOP`, so moving between screens and dialogs doesn't drop the editor. Turning remote control on or off in Settings starts or stops it straight away. Stopping closes every WebSocket with `1001`. The server and the job runner live in the `Rig` (application scope); the Capture screen attaches the camera, ring and sequencer when it starts and detaches them when it stops, aborting any job.
+- **Server lifetime:** start the server, mDNS and the Wi-Fi `MulticastLock` when the app comes to the foreground with remote control on, and stop them when it goes to the background: `ProcessLifecycleOwner` (`androidx.lifecycle:lifecycle-process`) `ON_START` and `ON_STOP`, so moving between screens and dialogs doesn't drop the editor. Turning remote control on or off in Settings starts or stops it straight away. Stopping closes every WebSocket with `1001`, then the WebRTC transport. The server and the job runner live in the `Rig` (application scope); the Capture screen attaches the camera, ring and sequencer when it starts and detaches them when it stops, aborting any job.
 - **Camera not open:** while no Capture screen is attached, the **Cam** endpoints answer `503 camera_unavailable` before any other check, and `status` has `cameraOpen: false`.
 - **Sessions:** the API reads and deletes through `SessionStore`, the same as the phone's screens, on a background thread. Holding the store's lock around each delete, and checking the running job's target first, keeps a delete from racing a capture into the same session.
 - **Threads:** the server handles each connection on its own thread. Jobs run on the job runner's single thread. Camera calls go through `CameraController`, which already marshals to the main thread. Hold one lock around "is a job running / start a job", so two requests can't both start one.
@@ -678,4 +788,6 @@ These aren't part of the wire format, but they're what the editor expects. They'
 - **Rotation and coordinates:** the analysis frames arrive in sensor orientation. The app rotates each preview frame upright as it scales it, and sends rotation 0. Ring overlay and focus coordinates are in the upright frame, so rotate the detector's points (and un-rotate focus points before building a `MeteringPoint`).
 - **Preview encoding:** encode on the analysis thread only when at least one socket wants a frame and its last frame has gone, and only at the requested fps. Reuse one `ByteArrayOutputStream`.
 - **Large files:** stream shot files with their length, so a 10 MB video isn't loaded into memory.
+- **The WebRTC bridge:** a Go program ([badge-turntable/webrtc-bridge/](badge-turntable/webrtc-bridge/README.md), Pion) built into the app with gomobile. The server starts it after the HTTP server, on the Wi-Fi addresses, and stops it after closing the WebSockets. It relays each `req` channel as an HTTP request, and each `live` channel as a WebSocket, to the app's own server on `127.0.0.1`, so the API code is the same for both transports. Requests through it come from loopback, which the server doesn't trust: tokens are checked as for any client, and the 4-WebSocket limit counts editors on either transport. Without the bridge (not built in, or its native library didn't load), Info and Pair say `webrtc: null`.
+- **`X-Paired: true`:** the app adds this header to every response to a request whose token is valid. It's how the bridge learns a connection is [authenticated](#the-phones-side) without knowing the tokens. The bridge doesn't pass it on.
 - **Testing without the editor:** `curl -s http://<phone>:8737/api/info`, then pair with `curl -s -X POST -H 'Content-Type: application/json' -d '{"code":"123456","clientName":"curl"}' http://<phone>:8737/api/pair`.
