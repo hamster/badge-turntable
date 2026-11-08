@@ -14,10 +14,26 @@ android {
         versionName '1.0'
     }
 
+    // Release signing: the keystore and its passwords live outside the repo, in the user's
+    // ~/.gradle/gradle.properties (BT_RELEASE_STORE_FILE, _STORE_PASSWORD, _KEY_ALIAS,
+    // _KEY_PASSWORD). Without them, assembleRelease makes an unsigned APK.
+    def releaseSigning = project.hasProperty('BT_RELEASE_STORE_FILE')
+    signingConfigs {
+        release {
+            if (releaseSigning) {
+                storeFile file(BT_RELEASE_STORE_FILE)
+                storePassword BT_RELEASE_STORE_PASSWORD
+                keyAlias BT_RELEASE_KEY_ALIAS
+                keyPassword BT_RELEASE_KEY_PASSWORD
+            }
+        }
+    }
+
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            if (releaseSigning) signingConfig signingConfigs.release
         }
     }
 
