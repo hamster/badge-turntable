@@ -28,3 +28,19 @@
   web copies. The spin path is checked on the phone; the stills path is only unit-tested.
 - [ ] Editor (badges repo): draw the side bars on the preview, drag them, and send
   `POST /api/camera {"bars": …}` on release (Remote-API.md, camera settings).
+- [ ] Show the app's version in the app (from `BuildConfig`/the package info, e.g. "1.0 (2)"),
+  in the info area with a link or button to the source,
+  https://github.com/hamster/badge-turntable. `GET /api/info` already reports `appVersion`.
+- [ ] USB-C IR dongle: get the turntable driven through a plug-in IR emitter, for phones
+  without a built-in blaster (the OnePlus 9 Pro has none; the 13 does). When it arrives, find
+  out how it's driven: many are a USB audio device that turns a waveform into IR (play the NEC
+  carrier as audio), others USB HID or a vendor serial protocol (usb-serial-for-android is
+  already planned for IR learning). Then put it behind `IrTransmitter`, so `TurntableController`
+  doesn't care which one sends, and say which one is in use in Settings → IR.
+- [ ] Release signing: the 1.0 key is `~/.android/badge-turntable-release.jks`, with its
+  passwords in `~/.gradle/gradle.properties` (`BT_RELEASE_*`). Back both up somewhere safe:
+  every future release must be signed with that key, or phones can't update without
+  uninstalling.
+- [ ] Optional: build releases for arm64 only (`ndk { abiFilters 'arm64-v8a' }` for release).
+  The 1.0 APK is 212 MB, mostly OpenCV for four ABIs; arm64 alone would be about a quarter of
+  that. Every target phone is arm64, and the WebRTC bridge already is.
