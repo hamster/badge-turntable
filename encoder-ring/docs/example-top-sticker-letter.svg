@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="279.4mm" height="215.9mm" viewBox="0 0 279.4 215.9" font-family="Helvetica, Arial, sans-serif">
+<rect width="279.4" height="215.9" fill="#fff"/>
+<text x="12" y="14" font-size="4.2" font-weight="bold" fill="#000">Badge Turntable platter sticker</text>
+<text x="12" y="19" font-size="2.8" fill="#333">143.3 mm disc for a 145.3 mm platter (1 mm inset). Print &amp; Cut: add registration marks in the cutter software, print at 100%, cut the red circle.</text>
+<g id="print">
+<circle cx="139.7" cy="111.95" r="10" fill="none" stroke="#bbb" stroke-width="0.2"/>
+<circle cx="139.7" cy="111.95" r="20" fill="none" stroke="#bbb" stroke-width="0.2"/>
+<circle cx="139.7" cy="111.95" r="30" fill="none" stroke="#bbb" stroke-width="0.2"/>
+<circle cx="139.7" cy="111.95" r="40" fill="none" stroke="#bbb" stroke-width="0.2"/>
+<circle cx="139.7" cy="111.95" r="50" fill="none" stroke="#bbb" stroke-width="0.2"/>
+<circle cx="139.7" cy="111.95" r="60" fill="none" stroke="#bbb" stroke-width="0.2"/>
+<path d="M133.7 111.95h12M139.7 105.95v12" stroke="#000" stroke-width="0.3"/>
+<path d="M139.7 182.1L139.7 174.1M127.519 181.034L128.04 178.08M115.707 177.869L116.733 175.05M104.625 172.702L106.125 170.104M94.608 165.688L96.537 163.39M85.962 157.042L88.26 155.113M78.948 147.025L81.546 145.525M73.781 135.943L76.6 134.917M70.616 124.131L73.57 123.61M69.55 111.95L77.55 111.95M70.616 99.769L73.57 100.29M73.781 87.957L76.6 88.983M78.948 76.875L81.546 78.375M85.962 66.858L88.26 68.787M94.608 58.212L96.537 60.51M104.625 51.198L106.125 53.796M115.707 46.031L116.733 48.85M127.519 42.866L128.04 45.82M139.7 41.8L139.7 49.8M151.881 42.866L151.36 45.82M163.693 46.031L162.667 48.85M174.775 51.198L173.275 53.796M184.792 58.212L182.863 60.51M193.438 66.858L191.14 68.787M200.452 76.875L197.854 78.375M205.619 87.957L202.8 88.983M208.784 99.769L205.83 100.29M209.85 111.95L201.85 111.95M208.784 124.131L205.83 123.61M205.619 135.943L202.8 134.917M200.452 147.025L197.854 145.525M193.438 157.042L191.14 155.113M184.792 165.688L182.863 163.39M174.775 172.702L173.275 170.104M163.693 177.869L162.667 175.05M151.881 181.034L151.36 178.08" stroke="#000" stroke-width="0.35"/>
+<path d="M139.7 111.95L139.7 182.1" stroke="#c00" stroke-width="0.6"/>
+<path d="M139.7 111.95L77.55 111.95M139.7 111.95L139.7 49.8M139.7 111.95L201.85 111.95" stroke="#999" stroke-width="0.25" stroke-dasharray="1.5 1"/>
+<text x="141.2" y="171.8" font-size="3.4" text-anchor="start" fill="#c00">0° front</text>
+<text x="81.05" y="110.45" font-size="3.4" text-anchor="middle" fill="#000">90°</text>
+<text x="141.2" y="54.5" font-size="3.4" text-anchor="start" fill="#000">180°</text>
+<text x="198.35" y="110.45" font-size="3.4" text-anchor="middle" fill="#000">270°</text>
+</g>
+<g id="cut-line"><circle cx="139.7" cy="111.95" r="71.65" fill="none" stroke="#f00" stroke-width="0.25"/></g>
+<path d="M12 197.9h100" stroke="#000" stroke-width="0.4"/>
+<path d="M12 197.9v-3M22 197.9v-1.8M32 197.9v-1.8M42 197.9v-1.8M52 197.9v-1.8M62 197.9v-3M72 197.9v-1.8M82 197.9v-1.8M92 197.9v-1.8M102 197.9v-1.8M112 197.9v-3" stroke="#000" stroke-width="0.3"/>
+<text x="116" y="197.9" font-size="2.8" fill="#333">This bar must measure exactly 100 mm.</text>
+</svg>

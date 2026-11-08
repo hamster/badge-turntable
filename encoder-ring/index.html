@@ -93,6 +93,8 @@
           <option value="a4">A4 paper</option>
           <option value="zpl203">4×6 label, 203 dpi (ZPL)</option>
           <option value="zpl300">4×6 label, 300 dpi (ZPL)</option>
+          <option value="sticker-letter">Platter top sticker, US Letter (Print &amp; Cut)</option>
+          <option value="sticker-a4">Platter top sticker, A4 (Print &amp; Cut)</option>
         </select>
       </label>
     </form>
@@ -110,7 +112,7 @@
 <div id="print-area"></div>
 
 <script type="module">
-  import { planRing, paperSvgs, labelSvgs, labelZpl, summary, PAPER } from './ring.js';
+  import { planRing, paperSvgs, labelSvgs, labelZpl, summary, topStickerSvg, PAPER } from './ring.js';
 
   const form = document.getElementById('form');
   const $ = (id) => document.getElementById(id);
@@ -149,13 +151,18 @@
     try {
       const plan = planRing(opts);
       const isLabel = output.startsWith('zpl');
+      // The sticker is for the platter top: the rim size is its diameter (or circumference).
+      const sticker = output.startsWith('sticker-') ? output.slice('sticker-'.length) : null;
       const dpi = output === 'zpl300' ? 300 : 203;
-      const svgs = isLabel ? labelSvgs(plan) : paperSvgs(plan, output);
+      const svgs = sticker ? [topStickerSvg({ diameter: plan.diameter, paperKey: sticker })]
+        : isLabel ? labelSvgs(plan) : paperSvgs(plan, output);
       const zpl = isLabel ? labelZpl(plan, dpi) : '';
-      current = { plan, svgs, zpl, isLabel, output, dpi };
+      current = { plan, svgs, zpl, isLabel, output: sticker || output, sticker: !!sticker, dpi };
       const unit = isLabel ? 'label' : 'page';
       $('summary').className = 'summary';
-      $('summary').textContent = `${summary(plan)}  |  ${svgs.length} ${unit}${svgs.length > 1 ? 's' : ''}`;
+      $('summary').textContent = sticker
+        ? `Platter top sticker for a ${plan.diameter.toFixed(1)} mm platter  |  1 page`
+        : `${summary(plan)}  |  ${svgs.length} ${unit}${svgs.length > 1 ? 's' : ''}`;
       for (const svg of svgs) {
         const div = document.createElement('div');
         div.className = 'sheet ' + (isLabel ? 'label' : 'paper');
@@ -189,7 +196,7 @@
     window.print();
   });
   $('svg').addEventListener('click', () => {
-    const base = current.isLabel ? 'ring-4x6-preview' : `ring-${current.output}`;
+    const base = current.sticker ? `top-sticker-${current.output}` : current.isLabel ? 'ring-4x6-preview' : `ring-${current.output}`;
     current.svgs.forEach((svg, i) => download(`${base}-${i + 1}.svg`, svg, 'image/svg+xml'));
   });
   $('zpl').addEventListener('click', () => download(`ring-4x6-${current.dpi}dpi.zpl`, current.zpl, 'text/plain'));

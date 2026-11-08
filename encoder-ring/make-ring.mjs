@@ -4,6 +4,7 @@
 //   node make-ring.mjs --diameter 200 --height 16                 Letter SVG pages
 //   node make-ring.mjs --circumference 630 --height 16 --paper a4
 //   node make-ring.mjs --diameter 200 --height 16 --zpl --dpi 203  4x6 label ZPL + SVG previews
+//   node make-ring.mjs --top-sticker --diameter 145.3             platter-top sticker for Print & Cut
 //   node make-ring.mjs --docs                                     regenerate docs/ images
 //   node make-ring.mjs --diameter 200 --height 16 --pgm ring.pgm  whole ring as one raster strip,
 //                                                                 for testing the detector
@@ -11,7 +12,7 @@
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { planRing, paperSvgs, labelZpl, labelSvgs, cameraViewSvg, stripRects, summary } from './ring.js';
+import { planRing, paperSvgs, labelZpl, labelSvgs, cameraViewSvg, stripRects, summary, topStickerSvg } from './ring.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -19,7 +20,8 @@ function parseArgs(argv) {
   const args = { paper: 'letter', dpi: 203, dict: 50, height: 16, out: '.', pxPerMm: 8 };
   for (let i = 0; i < argv.length; i++) {
     const key = argv[i].replace(/^--/, '');
-    const flag = ['zpl', 'docs', 'help', 'invert'].includes(key);
+    const flag = ['zpl', 'docs', 'help', 'invert', 'topSticker', 'top-sticker'].includes(key);
+    if (key === 'top-sticker') { args.topSticker = true; continue; }
     if (flag) { args[key] = true; continue; }
     const value = argv[++i];
     if (value === undefined) throw new Error(`--${key} needs a value`);
@@ -65,6 +67,14 @@ function main() {
     write(docs, 'example-label-4x6.svg', labelSvgs(plan)[0]);
     write(docs, 'example-label-4x6-203dpi.zpl', labelZpl(plan, 203));
     write(docs, 'camera-view.svg', cameraViewSvg(plan, 20));
+    write(docs, 'example-top-sticker-letter.svg', topStickerSvg({ diameter: 145.3, paperKey: 'letter' }));
+    return;
+  }
+
+  if (args.topSticker) {
+    const diameter = args.diameter > 0 ? args.diameter : args.circumference / Math.PI;
+    write(args.out, `top-sticker-${args.paper}.svg`,
+      topStickerSvg({ diameter, paperKey: args.paper, inset: args.inset }));
     return;
   }
 
@@ -102,6 +112,9 @@ const readmeUsage = `Usage: node make-ring.mjs (--diameter MM | --circumference 
                      Shorter strips sit flatter on a rim with a draft angle.
   --dict 50|100|250  ArUco DICT_4X4 size (default 50)
   --paper letter|a4  paper size for SVG pages (default letter)
+  --top-sticker      write the platter-top alignment sticker (Print & Cut SVG) instead:
+                     --diameter is the platter top; --height isn't used
+  --inset MM         sticker edge inside the platter edge (default 1)
   --zpl              write ZPL for 4x6 in labels instead of paper SVGs
   --dpi 203|300      label printer resolution (default 203)
   --out DIR          output folder (default .)

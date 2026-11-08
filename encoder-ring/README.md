@@ -135,11 +135,31 @@ A sample label file is in [docs/example-label-4x6-203dpi.zpl](docs/example-label
 5. The last strip should meet the start of strip 1. A gap or overlap of a millimetre or two is fine. If it's more, reprint with `--circumference` set to the old band length plus the gap (or minus the overlap). This also corrects for printer scale, label thickness and measuring error, because it's based on what actually printed.
 6. In the app, open the ring check. Turn the table by hand: the angle should increase smoothly with no jumps, and every marker ID should be found.
 
+## Platter top sticker
+
+An optional alignment sticker for the top of the platter, so each badge goes on centred and square: a disc with a red 0° line toward the camera, ticks every 10° (longer at 45°, labelled every 90°, clockwise seen from above), dashed 90° lines, centring rings every 10 mm and a centre cross. It's made for a cutter's **Print & Cut** (Silhouette Cameo and similar): the red circle is the cut line.
+
+```
+node make-ring.mjs --top-sticker --diameter 145.3              # JAYEGT 5.74 in, US Letter
+node make-ring.mjs --top-sticker --diameter 145.3 --paper a4
+node make-ring.mjs --top-sticker --diameter 145.3 --inset 2    # edge 2 mm inside the platter's
+```
+
+In the browser page, pick **Platter top sticker** under **Print on**; the rim size is used as the platter's size. The disc is 1 mm smaller all round than the platter (`--inset`), so it never overhangs.
+
+1. Open the SVG in the cutter software (Silhouette Studio: File → Open). Check it came in at its real size: the 100 mm bar should measure 100 mm.
+2. Turn on registration marks (Silhouette Studio: Page Setup → Registration), keeping them clear of the drawing.
+3. Set the red circle (group `cut-line`) to cut, and nothing else.
+4. Print at 100% on sticker paper, load it in the cutter and cut.
+5. Stick it on the platter with the 0° line toward the camera when the table is at its front (after **Set front**).
+
+A preview is in [docs/example-top-sticker-letter.svg](docs/example-top-sticker-letter.svg).
+
 ## Files
 
 | File | What it is |
 | --- | --- |
-| [ring.js](ring.js) | Generator library: marker codes, layout, SVG and ZPL output. Shared by the page and the CLI. |
+| [ring.js](ring.js) | Generator library: marker codes, layout, SVG and ZPL output, and the platter top sticker. Shared by the page and the CLI. |
 | [index.html](index.html) | Browser generator. |
 | [make-ring.mjs](make-ring.mjs) | Command-line generator. `--docs` regenerates the images in [docs/](docs/). |
 | [docs/](docs/) | Images used on this page and a sample ZPL file. |

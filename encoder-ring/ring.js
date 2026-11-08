@@ -295,6 +295,83 @@ export function paperSvgs(plan, paperKey) {
   });
 }
 
+// ---- Top sticker (Print & Cut) ---------------------------------------------
+
+// Default gap between the sticker's edge and the platter's, so it never overhangs.
+export const STICKER_INSET = 1;
+
+// An alignment sticker for the platter top, for a cutter's Print & Cut (Silhouette Cameo
+// and the like): a disc with a 0° line toward the camera, ticks every 10° (labelled every
+// 90°), centring rings every 10 mm and a centre cross, so a badge goes on centred and
+// square. The red circle is the cut line, in its own group (id "cut-line"); the cutter
+// software adds its registration marks. One SVG page, sized in millimetres.
+//   diameter: the platter top (mm); paperKey: letter | a4; inset: mm inside the edge.
+export function topStickerSvg(opts) {
+  const paper = PAPER[opts.paperKey || 'letter'];
+  if (!paper) throw new Error(`Unknown paper size "${opts.paperKey}".`);
+  const inset = opts.inset >= 0 ? opts.inset : STICKER_INSET;
+  const d = opts.diameter - 2 * inset;
+  if (!(d > 20)) throw new Error('Enter the platter diameter (more than 20 mm).');
+  // Cutters keep their registration marks clear of the page edges: about 20 mm.
+  const room = Math.min(paper.w, paper.h) - 2 * 20 - 14;
+  if (d > room) throw new Error(`A ${d.toFixed(1)} mm sticker doesn't fit on ${paper.name} with registration marks (max ${room.toFixed(0)} mm).`);
+
+  const r = d / 2, cx = paper.w / 2, cy = paper.h / 2 + 4;
+  // Angles clockwise as seen from above, 0° at the bottom of the page (toward the camera).
+  const at = (deg, rad) => {
+    const a = (deg * Math.PI) / 180;
+    return [r2(cx - rad * Math.sin(a)), r2(cy + rad * Math.cos(a))];
+  };
+  const out = [];
+  out.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${paper.w}mm" height="${paper.h}mm" viewBox="0 0 ${paper.w} ${paper.h}" font-family="Helvetica, Arial, sans-serif">`);
+  out.push(`<rect width="${paper.w}" height="${paper.h}" fill="#fff"/>`);
+  out.push(`<text x="12" y="14" font-size="4.2" font-weight="bold" fill="#000">Badge Turntable platter sticker</text>`);
+  out.push(`<text x="12" y="19" font-size="2.8" fill="#333">${r2(d)} mm disc for a ${r2(opts.diameter)} mm platter (${r2(inset)} mm inset). ` +
+    `Print &amp; Cut: add registration marks in the cutter software, print at 100%, cut the red circle.</text>`);
+
+  out.push('<g id="print">');
+  // Centring rings every 10 mm, and a centre cross.
+  const rings = [];
+  for (let rr = 10; rr < r - 4; rr += 10) rings.push(`<circle cx="${r2(cx)}" cy="${r2(cy)}" r="${rr}" fill="none" stroke="#bbb" stroke-width="0.2"/>`);
+  out.push(...rings);
+  out.push(`<path d="M${r2(cx - 6)} ${r2(cy)}h12M${r2(cx)} ${r2(cy - 6)}v12" stroke="#000" stroke-width="0.3"/>`);
+  // Ticks round the edge: every 10°, longer every 45°, longest every 90°.
+  const ticks = [];
+  for (let deg = 0; deg < 360; deg += 10) {
+    const len = deg % 90 === 0 ? 8 : deg % 45 === 0 ? 5 : 3;
+    const [x1, y1] = at(deg, r - 1.5), [x2, y2] = at(deg, r - 1.5 - len);
+    ticks.push(`M${x1} ${y1}L${x2} ${y2}`);
+  }
+  out.push(`<path d="${ticks.join('')}" stroke="#000" stroke-width="0.35"/>`);
+  // The 0° line, from the centre to the edge, toward the camera.
+  const [zx, zy] = at(0, r - 1.5);
+  out.push(`<path d="M${r2(cx)} ${r2(cy)}L${zx} ${zy}" stroke="#c00" stroke-width="0.6"/>`);
+  // The 90° lines, fainter, to square a badge up.
+  const cross = [90, 180, 270].map((deg) => { const [x, y] = at(deg, r - 9.5); return `M${r2(cx)} ${r2(cy)}L${x} ${y}`; });
+  out.push(`<path d="${cross.join('')}" stroke="#999" stroke-width="0.25" stroke-dasharray="1.5 1"/>`);
+  for (const deg of [0, 90, 180, 270]) {
+    const [x, y] = at(deg, r - 13);
+    const label = deg === 0 ? '0° front' : `${deg}°`;
+    // Beside the line, not on it: right of the 0°/180° lines, above the 90°/270° ones.
+    const side = deg % 180 === 0;
+    const tx = side ? r2(x + 1.5) : x, ty = side ? r2(y + 1.2) : r2(y - 1.5);
+    out.push(`<text x="${tx}" y="${ty}" font-size="3.4" text-anchor="${side ? 'start' : 'middle'}" fill="${deg === 0 ? '#c00' : '#000'}">${label}</text>`);
+  }
+  out.push('</g>');
+
+  out.push(`<g id="cut-line"><circle cx="${r2(cx)}" cy="${r2(cy)}" r="${r2(r)}" fill="none" stroke="#f00" stroke-width="0.25"/></g>`);
+
+  // 100 mm scale bar, as on the ring pages.
+  const m = 12, by = paper.h - m - 6;
+  out.push(`<path d="M${m} ${by}h100" stroke="#000" stroke-width="0.4"/>`);
+  const bar = [];
+  for (let t = 0; t <= 100; t += 10) bar.push(`M${m + t} ${by}v${t % 50 === 0 ? -3 : -1.8}`);
+  out.push(`<path d="${bar.join('')}" stroke="#000" stroke-width="0.3"/>`);
+  out.push(`<text x="${m + 104}" y="${by}" font-size="2.8" fill="#333">This bar must measure exactly 100 mm.</text>`);
+  out.push('</svg>');
+  return out.join('\n');
+}
+
 // ---- 4x6 label (ZPL + SVG preview) ----------------------------------------
 
 // Strips run along the 6 in feed direction, side by side across the 4 in width.
